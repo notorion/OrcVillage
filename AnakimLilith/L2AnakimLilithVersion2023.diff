@@ -1,0 +1,1447 @@
+diff --git dist/game/data/scripts/ai/bosses/Anakim/31101.html dist/game/data/scripts/ai/bosses/Anakim/31101.html
+index ff3ddeda694..d770d24b660 100644
+--- dist/game/data/scripts/ai/bosses/Anakim/31101.html
++++ dist/game/data/scripts/ai/bosses/Anakim/31101.html
+@@ -1,7 +1,5 @@
+ <html><body>Gatekeeper Ziggurat:<br>
+-A Human voice seems to emanate from a shining, blue globe:<br>
++A human-like voice comes from a glowing blue orb:<br>
+ Behold the gateway to the Forbidden Sacred Area! My job is to guard it, and you cannot pass without my permission.<br>
+-<Button ALIGN=LEFT ICON="NORMAL" action="bypass -h Quest Anakim">"I want to teleport."</Button>
+-<Button ALIGN=LEFT ICON="NORMAL" action="bypass -h npc_%objectId%_Quest OracleTeleport">Enter the Dimensional Rift</Button>
+-<Button ALIGN=LEFT ICON="QUEST" action="bypass npc_%objectId%_Quest">Quest</Button>
++<Button ALIGN=LEFT ICON="NORMAL" action="bypass -h Quest Anakim">"I kinda wanna teleport inside."</Button>
+ </body></html>
+\ No newline at end of file
+diff --git dist/game/data/scripts/ai/bosses/Anakim/Anakim.java dist/game/data/scripts/ai/bosses/Anakim/Anakim.java
+index 26c4024d137..3b8fe12a92e 100644
+--- dist/game/data/scripts/ai/bosses/Anakim/Anakim.java
++++ dist/game/data/scripts/ai/bosses/Anakim/Anakim.java
+@@ -22,10 +22,10 @@ package ai.bosses.Anakim;
+ 
+ import java.util.Calendar;
+ import java.util.Collection;
+-import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ import org.l2jmobius.gameserver.ai.Intention;
+-import org.l2jmobius.gameserver.config.GrandBossConfig;
+ import org.l2jmobius.gameserver.managers.GrandBossManager;
+ import org.l2jmobius.gameserver.managers.MapRegionManager;
+ import org.l2jmobius.gameserver.managers.ZoneManager;
+@@ -38,20 +38,17 @@ import org.l2jmobius.gameserver.model.actor.Npc;
+ import org.l2jmobius.gameserver.model.actor.Player;
+ import org.l2jmobius.gameserver.model.actor.enums.player.TeleportWhereType;
+ import org.l2jmobius.gameserver.model.actor.instance.GrandBoss;
+-import org.l2jmobius.gameserver.model.groups.Party;
+ import org.l2jmobius.gameserver.model.script.QuestTimer;
+ import org.l2jmobius.gameserver.model.script.Script;
+ import org.l2jmobius.gameserver.model.skill.AbnormalType;
+ import org.l2jmobius.gameserver.model.skill.Skill;
++import org.l2jmobius.gameserver.model.skill.holders.SkillHolder;
+ import org.l2jmobius.gameserver.model.zone.ZoneType;
+-import org.l2jmobius.gameserver.network.serverpackets.NpcHtmlMessage;
+ import org.l2jmobius.gameserver.util.ArrayUtil;
+ 
+ /**
+- * Anakim AI
+- * @author LasTravel, NviX
+- * @URL http://boards.lineage2.com/showpost.php?p=3386784&postcount=6<br>
+- * @video http://www.youtube.com/watch?v=LecymFTJQzQ
++ * Anakim Manager AI - version 2023
++ * @author Notorion
+  */
+ public class Anakim extends Script
+ {
+@@ -64,9 +61,14 @@ public class Anakim extends Script
+ 	private static final int ANAKIM = 29348;
+ 	private static final int EXIST_CUBIC = 31109;
+ 	private static final int ANAKIM_CUBIC = 31101;
++	
++	// General Configs
++	private static final int MIN_LEVEL_TO_ATTACK = 110;
++	
++	// Minions
+ 	// @formatter:off
+-    private static final int[] ANAKIM_MINIONS = {29349, 29350, 29351};
+-    // @formatter:on
++	private static final int[] ANAKIM_MINIONS = {29349, 29350, 29351};
++	// @formatter:on
+ 	private static final int[] ALL_MOBS =
+ 	{
+ 		ANAKIM,
+@@ -75,14 +77,33 @@ public class Anakim extends Script
+ 		ANAKIM_MINIONS[2],
+ 	};
+ 	
+-	// Misc
+-	private static final Location ENTER_ANAKIM_LOC = new Location(184569, -12134, -5499);
++	// Locations
++	private static final Location ENTER_ANAKIM_LOC = new Location(185078, -12375, -5488);
++	private static final Location SPAWN_LOC = new Location(185076, -13295, -5488, 16384);
++	private static final Location KICK_LOC = new Location(183505, -15903, -2712);
++	
+ 	private static final ZoneType BOSS_ZONE = ZoneManager.getInstance().getZoneById(12003);
+ 	
+-	// Vars
++	// Barrier Skills
++	private static final SkillHolder BARRIER_INITIAL = new SkillHolder(29518, 1);
++	private static final SkillHolder BARRIER_TIMED = new SkillHolder(29515, 1);
++	
++	// Barrier Configuration
++	private static final int HITS_TO_BREAK_INITIAL = 2000; // Hits to break immunity
++	private static final int HITS_TO_BREAK_TIMED = 2000; // Hits to break timed barrier
++	private static final long TIME_VULNERABLE = 3 * 60000; // Vulnerable duration (3 min)
++	private static final long TIME_BARRIER_LIMIT = 10 * 60000; // Max barrier duration (10 min)
++	private static final long TIME_RESET_INACTIVITY = 10 * 60000; // Reset if inactive
++	
++	// Variables
+ 	private static long _lastAction;
+ 	private static Npc _anakimBoss;
+-	private static GrandBoss _anakimTemp;
++	
++	// Barrier Controls
++	private boolean _isInitialBarrier = false;
++	private boolean _isTimedBarrier = false;
++	private final Map<Npc, Integer> _hitCounter = new ConcurrentHashMap<>();
++	private long _lastHitTime = 0;
+ 	
+ 	public Anakim()
+ 	{
+@@ -93,31 +114,57 @@ public class Anakim extends Script
+ 		addKillId(ALL_MOBS);
+ 		addSkillSeeId(ALL_MOBS);
+ 		
+-		// Unlock
+ 		final StatSet info = GrandBossManager.getInstance().getStatSet(ANAKIM);
+ 		final int status = GrandBossManager.getInstance().getStatus(ANAKIM);
++		
+ 		if (status == DEAD)
+ 		{
+-			final long time = info.getLong("respawn_time") - System.currentTimeMillis();
+-			if (time > 0)
++			long respawnTime = info.getLong("respawn_time");
++			if (respawnTime == 0)
++			{
++				respawnTime = getNextRespawnTime();
++				info.set("respawn_time", respawnTime);
++				GrandBossManager.getInstance().setStatSet(ANAKIM, info);
++			}
++			
++			final long delay = respawnTime - System.currentTimeMillis();
++			if (delay > 0)
+ 			{
+-				startQuestTimer("unlock_anakim", time, null, null);
++				startQuestTimer("unlock_anakim", delay, null, null);
++				System.out.println("GrandBossManager: Anakim spawn scheduled in " + (delay / 60000) + " minutes.");
+ 			}
+ 			else
+ 			{
+-				_anakimTemp = (GrandBoss) addSpawn(ANAKIM, -126920, -234182, -15563, 0, false, 0);
+-				GrandBossManager.getInstance().addBoss(_anakimTemp);
+-				GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
++				spawnAnakim();
+ 			}
+ 		}
+ 		else
+ 		{
+-			_anakimTemp = (GrandBoss) addSpawn(ANAKIM, -126920, -234182, -15563, 0, false, 0);
+-			GrandBossManager.getInstance().addBoss(_anakimTemp);
+-			GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
++			spawnAnakim();
+ 		}
+ 	}
+ 	
++	private void spawnAnakim()
++	{
++		GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
++		
++		if ((_anakimBoss != null) && !_anakimBoss.isDead())
++		{
++			return;
++		}
++		
++		_anakimBoss = addSpawn(ANAKIM, SPAWN_LOC, false, 0);
++		GrandBossManager.getInstance().addBoss((GrandBoss) _anakimBoss);
++		
++		_anakimBoss.setRandomWalking(false);
++		_anakimBoss.setRandomAnimation(false);
++		
++		applyInitialBarrier(_anakimBoss);
++		
++		_lastAction = System.currentTimeMillis();
++		startQuestTimer("check_activity_task", 60000, null, null);
++	}
++	
+ 	@Override
+ 	public String onEvent(String event, Npc npc, Player player)
+ 	{
+@@ -125,67 +172,67 @@ public class Anakim extends Script
+ 		{
+ 			case "unlock_anakim":
+ 			{
+-				_anakimTemp = (GrandBoss) addSpawn(ANAKIM, -126920, -234182, -15563, 0, false, 0);
+-				GrandBossManager.getInstance().addBoss(_anakimTemp);
+-				GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
++				spawnAnakim();
+ 				break;
+ 			}
+ 			case "check_activity_task":
+ 			{
+-				if ((_lastAction + 900000) < System.currentTimeMillis())
++				// Reset logic
++				if ((_lastAction + TIME_RESET_INACTIVITY) < System.currentTimeMillis())
+ 				{
+-					GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
+-					for (Creature creature : BOSS_ZONE.getCharactersInside())
++					if ((_anakimBoss != null) && !_anakimBoss.isDead())
+ 					{
+-						if (creature != null)
++						boolean isFighting = GrandBossManager.getInstance().getStatus(ANAKIM) == FIGHTING;
++						boolean isDamaged = _anakimBoss.getCurrentHp() < _anakimBoss.getMaxHp();
++						
++						if (isFighting || isDamaged)
+ 						{
+-							if (creature.isNpc())
+-							{
+-								creature.deleteMe();
+-							}
+-							else if (creature.isPlayer())
+-							{
+-								creature.teleToLocation(MapRegionManager.getInstance().getTeleToLocation(creature, TeleportWhereType.TOWN));
+-							}
++							resetAnakim(_anakimBoss);
+ 						}
+ 					}
+-					
+-					startQuestTimer("end_anakim", 2000, null, null);
+ 				}
+ 				else
+ 				{
++					// Minion Logic
++					boolean isBossAlive = ((_anakimBoss != null) && !_anakimBoss.isDead());
++					boolean isNotFighting = GrandBossManager.getInstance().getStatus(ANAKIM) != FIGHTING;
++					boolean hasPlayers = ((BOSS_ZONE != null) && !BOSS_ZONE.getPlayersInside().isEmpty());
++					
++					if (isBossAlive && isNotFighting && hasPlayers)
++					{
++						manageMinions(_anakimBoss);
++					}
++					
+ 					startQuestTimer("check_activity_task", 60000, null, null);
+ 				}
+ 				break;
+ 			}
+-			case "cancel_timers":
++			case "END_VULNERABILITY":
+ 			{
+-				QuestTimer activityTimer = getQuestTimer("check_activity_task", null, null);
+-				if (activityTimer != null)
++				if ((npc != null) && !npc.isDead())
+ 				{
+-					activityTimer.cancel();
++					applyTimedBarrier(npc);
+ 				}
+-				
+-				QuestTimer forceEnd = getQuestTimer("end_anakim", null, null);
+-				if (forceEnd != null)
++				break;
++			}
++			case "END_TIMED_BARRIER":
++			{
++				if ((npc != null) && !npc.isDead() && _isTimedBarrier)
+ 				{
+-					forceEnd.cancel();
++					applyTimedBarrier(npc);
+ 				}
+ 				break;
+ 			}
+-			case "end_anakim":
++			case "cancel_timers":
+ 			{
+-				notifyEvent("cancel_timers", null, null);
+-				if (_anakimBoss != null)
++				QuestTimer activityTimer = getQuestTimer("check_activity_task", null, null);
++				if (activityTimer != null)
+ 				{
+-					_anakimBoss.deleteMe();
++					activityTimer.cancel();
+ 				}
+ 				
+-				BOSS_ZONE.oustAllPlayers();
+-				if (GrandBossManager.getInstance().getStatus(ANAKIM) != DEAD)
+-				{
+-					GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
+-				}
++				cancelQuestTimers("END_VULNERABILITY");
++				cancelQuestTimers("END_TIMED_BARRIER");
+ 				break;
+ 			}
+ 			case "exist":
+@@ -194,79 +241,74 @@ public class Anakim extends Script
+ 				break;
+ 			}
+ 		}
+-		
+ 		return super.onEvent(event, npc, player);
+ 	}
+ 	
+-	@Override
+-	public String onTalk(Npc npc, Player player)
++	private void manageMinions(Npc boss)
+ 	{
+-		if (npc.getId() == ANAKIM_CUBIC)
++		if (BOSS_ZONE == null)
+ 		{
+-			final int _anakimStatus = GrandBossManager.getInstance().getStatus(ANAKIM);
+-			if (_anakimStatus > ALIVE)
+-			{
+-				return "31101-01.html";
+-			}
+-			
+-			if (!player.isInParty())
+-			{
+-				final NpcHtmlMessage packet = new NpcHtmlMessage(npc.getObjectId());
+-				packet.setHtml(getHtm(player, "31101-02.html"));
+-				packet.replace("%min%", Integer.toString(GrandBossConfig.ANAKIM_MIN_PLAYERS));
+-				player.sendPacket(packet);
+-				return null;
+-			}
+-			
+-			final Party party = player.getParty();
+-			final boolean isInCC = party.isInCommandChannel();
+-			final List<Player> members = (isInCC) ? party.getCommandChannel().getMembers() : party.getMembers();
+-			final boolean isPartyLeader = (isInCC) ? party.getCommandChannel().isLeader(player) : party.isLeader(player);
+-			if (!isPartyLeader)
+-			{
+-				return "31101-03.html";
+-			}
+-			
+-			if ((members.size() < GrandBossConfig.ANAKIM_MIN_PLAYERS) || (members.size() > GrandBossConfig.ANAKIM_MAX_PLAYERS))
+-			{
+-				final NpcHtmlMessage packet = new NpcHtmlMessage(npc.getObjectId());
+-				packet.setHtml(getHtm(player, "31101-02.html"));
+-				packet.replace("%min%", Integer.toString(GrandBossConfig.ANAKIM_MIN_PLAYERS));
+-				player.sendPacket(packet);
+-				return null;
+-			}
+-			
+-			for (Player member : members)
++			return;
++		}
++		
++		for (Creature c : BOSS_ZONE.getCharactersInside())
++		{
++			if ((c != null) && c.isNpc() && !c.isDead())
+ 			{
+-				if (member.getLevel() < GrandBossConfig.ANAKIM_MIN_PLAYER_LEVEL)
++				if (ArrayUtil.contains(ANAKIM_MINIONS, c.getId()))
+ 				{
+-					final NpcHtmlMessage packet = new NpcHtmlMessage(npc.getObjectId());
+-					packet.setHtml(getHtm(player, "31101-04.html"));
+-					packet.replace("%minLevel%", Integer.toString(GrandBossConfig.ANAKIM_MIN_PLAYER_LEVEL));
+-					player.sendPacket(packet);
+-					return null;
++					if (boss.calculateDistance3D(c) > 500)
++					{
++						int x = boss.getX() + getRandom(-200, 200);
++						int y = boss.getY() + getRandom(-200, 200);
++						c.teleToLocation(x, y, boss.getZ());
++					}
+ 				}
+ 			}
+-			
+-			for (Player member : members)
++		}
++	}
++	
++	private void resetAnakim(Npc npc)
++	{
++		if (GrandBossManager.getInstance().getStatus(ANAKIM) != ALIVE)
++		{
++			GrandBossManager.getInstance().setStatus(ANAKIM, ALIVE);
++		}
++		
++		npc.setCurrentHp(npc.getMaxHp());
++		npc.setCurrentMp(npc.getMaxMp());
++		npc.teleToLocation(SPAWN_LOC, true);
++		npc.stopAllEffects();
++		
++		if (npc.isAttackable())
++		{
++			npc.asAttackable().clearAggroList();
++		}
++		
++		if (BOSS_ZONE != null)
++		{
++			for (Creature c : BOSS_ZONE.getCharactersInside())
+ 			{
+-				if (member.isInsideRadius3D(npc, 1000) && (npc.getId() == ANAKIM_CUBIC))
++				if ((c != null) && c.isPlayer())
+ 				{
+-					member.teleToLocation(ENTER_ANAKIM_LOC, true);
++					c.teleToLocation(MapRegionManager.getInstance().getTeleToLocation(c, TeleportWhereType.TOWN));
+ 				}
+ 			}
+-			
+-			if ((_anakimStatus == ALIVE) && (npc.getId() == ANAKIM_CUBIC))
+-			{
+-				GrandBossManager.getInstance().setStatus(ANAKIM, FIGHTING);
+-				
+-				// Spawn the rb
+-				_anakimBoss = addSpawn(ANAKIM, 185080, -12613, -5499, 16550, false, 0);
+-				GrandBossManager.getInstance().addBoss((GrandBoss) _anakimBoss);
+-				startQuestTimer("end_anakim", 60 * 60000, null, null); // 1h
+-			}
+ 		}
+ 		
++		applyInitialBarrier(npc);
++		_lastAction = System.currentTimeMillis();
++		startQuestTimer("check_activity_task", 60000, null, null);
++	}
++	
++	@Override
++	public String onTalk(Npc npc, Player player)
++	{
++		if (npc.getId() == ANAKIM_CUBIC)
++		{
++			player.teleToLocation(ENTER_ANAKIM_LOC, true);
++			return null;
++		}
+ 		return super.onTalk(npc, player);
+ 	}
+ 	
+@@ -280,21 +322,71 @@ public class Anakim extends Script
+ 	public void onAttack(Npc npc, Player attacker, int damage, boolean isPet)
+ 	{
+ 		_lastAction = System.currentTimeMillis();
+-		if (npc.isMinion() || npc.isRaid())// Anakim and minions
++		
++		if (attacker.getLevel() < MIN_LEVEL_TO_ATTACK)
+ 		{
+-			// Anti BUGGERS
+-			if (!BOSS_ZONE.isInsideZone(attacker)) // Character attacking out of zone
++			attacker.teleToLocation(KICK_LOC, true);
++			return;
++		}
++		
++		if (npc.getId() == ANAKIM)
++		{
++			if (GrandBossManager.getInstance().getStatus(ANAKIM) != FIGHTING)
+ 			{
+-				attacker.doDie(null);
++				GrandBossManager.getInstance().setStatus(ANAKIM, FIGHTING);
++			}
++			
++			// Wake up Minions
++			if (BOSS_ZONE != null)
++			{
++				for (Creature c : BOSS_ZONE.getCharactersInside())
++				{
++					if ((c != null) && c.isNpc() && !c.isDead())
++					{
++						if (ArrayUtil.contains(ANAKIM_MINIONS, c.getId()))
++						{
++							c.asAttackable().addDamageHate(attacker, 0, 999);
++							c.getAI().setIntention(Intention.ATTACK, attacker);
++						}
++					}
++				}
+ 			}
+ 			
+-			if (!BOSS_ZONE.isInsideZone(npc)) // Npc moved out of the zone
++			if (_isInitialBarrier || _isTimedBarrier)
++			{
++				if ((System.currentTimeMillis() - _lastHitTime) > 60000)
++				{
++					_hitCounter.put(npc, 0);
++				}
++				_lastHitTime = System.currentTimeMillis();
++				
++				int hits = _hitCounter.merge(npc, 1, Integer::sum);
++				int required = _isInitialBarrier ? HITS_TO_BREAK_INITIAL : HITS_TO_BREAK_TIMED;
++				
++				if (hits >= required)
++				{
++					enterVulnerableState(npc);
++				}
++			}
++		}
++		
++		if (npc.isMinion() || npc.isRaid())
++		{
++			if ((BOSS_ZONE != null) && !BOSS_ZONE.isInsideZone(attacker))
++			{
++				attacker.doDie(null);
++			}
++			if ((BOSS_ZONE != null) && !BOSS_ZONE.isInsideZone(npc))
+ 			{
+ 				Spawn spawn = npc.getSpawn();
+ 				if (spawn != null)
+ 				{
+ 					npc.teleToLocation(spawn.getX(), spawn.getY(), spawn.getZ());
+ 				}
++				else
++				{
++					npc.teleToLocation(SPAWN_LOC, true);
++				}
+ 			}
+ 		}
+ 	}
+@@ -305,16 +397,20 @@ public class Anakim extends Script
+ 		if (npc.getId() == ANAKIM)
+ 		{
+ 			notifyEvent("cancel_timers", null, null);
+-			addSpawn(EXIST_CUBIC, 185082, -12606, -5499, 6133, false, 900000); // 15min
++			
++			// Fix: Spawn Cubic at Boss location
++			addSpawn(EXIST_CUBIC, npc.getLocation(), false, 900000);
+ 			
+ 			GrandBossManager.getInstance().setStatus(ANAKIM, DEAD);
+-			final long respawnTime = getRespawnTime();
++			
++			final long respawnTime = getNextRespawnTime();
+ 			final StatSet info = GrandBossManager.getInstance().getStatSet(ANAKIM);
+-			info.set("respawn_time", System.currentTimeMillis() + respawnTime);
++			info.set("respawn_time", respawnTime);
+ 			GrandBossManager.getInstance().setStatSet(ANAKIM, info);
+ 			
+-			startQuestTimer("unlock_anakim", respawnTime, null, null);
+-			startQuestTimer("end_anakim", 900000, null, null);
++			startQuestTimer("unlock_anakim", respawnTime - System.currentTimeMillis(), null, null);
++			
++			_anakimBoss = null;
+ 		}
+ 	}
+ 	
+@@ -325,7 +421,7 @@ public class Anakim extends Script
+ 		{
+ 			if (skill.getAbnormalType() == AbnormalType.HP_RECOVER)
+ 			{
+-				if (!npc.isCastingNow() && (npc.getTarget() != npc) && (npc.getTarget() != caster) && (npc.getTarget() != _anakimBoss)) // Don't call minions if are healing Anakim
++				if (!npc.isCastingNow() && (npc.getTarget() != npc) && (npc.getTarget() != caster) && (npc.getTarget() != _anakimBoss))
+ 				{
+ 					npc.asAttackable().clearAggroList();
+ 					npc.setTarget(caster);
+@@ -336,45 +432,86 @@ public class Anakim extends Script
+ 		}
+ 	}
+ 	
+-	private int getRespawnTime()
++	private void applyInitialBarrier(Npc npc)
+ 	{
+-		return (int) calcReuseFromDays(0, 21, Calendar.TUESDAY, 0, 16, Calendar.SATURDAY);
++		cleanBarriers(npc);
++		_isInitialBarrier = true;
++		_isTimedBarrier = false;
++		_hitCounter.put(npc, 0);
++		
++		npc.setInvul(true);
++		if (BARRIER_INITIAL.getSkill() != null)
++		{
++			BARRIER_INITIAL.getSkill().applyEffects(npc, npc);
++		}
++		
++		cancelQuestTimer("END_VULNERABILITY", npc, null);
++		cancelQuestTimer("END_TIMED_BARRIER", npc, null);
+ 	}
+ 	
+-	private long calcReuseFromDays(int day1Minute, int day1Hour, int day1Day, int day2Minute, int day2Hour, int day2Day)
++	private void applyTimedBarrier(Npc npc)
+ 	{
+-		Calendar now = Calendar.getInstance();
+-		Calendar day1 = (Calendar) now.clone();
+-		day1.set(Calendar.MINUTE, day1Minute);
+-		day1.set(Calendar.HOUR_OF_DAY, day1Hour);
+-		day1.set(Calendar.DAY_OF_WEEK, day1Day);
++		cleanBarriers(npc);
++		_isInitialBarrier = false;
++		_isTimedBarrier = true;
++		_hitCounter.put(npc, 0);
+ 		
+-		Calendar day2 = (Calendar) day1.clone();
+-		day2.set(Calendar.MINUTE, day2Minute);
+-		day2.set(Calendar.HOUR_OF_DAY, day2Hour);
+-		day2.set(Calendar.DAY_OF_WEEK, day2Day);
+-		
+-		if (now.after(day1))
++		npc.setInvul(true);
++		if (BARRIER_TIMED.getSkill() != null)
+ 		{
+-			day1.add(Calendar.WEEK_OF_MONTH, 1);
++			BARRIER_TIMED.getSkill().applyEffects(npc, npc);
+ 		}
+ 		
+-		if (now.after(day2))
++		startQuestTimer("END_TIMED_BARRIER", TIME_BARRIER_LIMIT, npc, null);
++	}
++	
++	private void enterVulnerableState(Npc npc)
++	{
++		cleanBarriers(npc);
++		_isInitialBarrier = false;
++		_isTimedBarrier = false;
++		_hitCounter.put(npc, 0);
++		
++		npc.setInvul(false);
++		startQuestTimer("END_VULNERABILITY", TIME_VULNERABLE, npc, null);
++	}
++	
++	private void cleanBarriers(Npc npc)
++	{
++		if (BARRIER_INITIAL.getSkill() != null)
+ 		{
+-			day2.add(Calendar.WEEK_OF_MONTH, 1);
++			npc.stopSkillEffects(BARRIER_INITIAL.getSkill());
+ 		}
++		if (BARRIER_TIMED.getSkill() != null)
++		{
++			npc.stopSkillEffects(BARRIER_TIMED.getSkill());
++		}
++		npc.setInvul(false);
++	}
++	
++	// NEW SCHEDULE: Friday 20:00
++	private long getNextRespawnTime()
++	{
++		Calendar now = Calendar.getInstance();
++		
++		// Set to Friday 20:00
++		Calendar nextSpawn = (Calendar) now.clone();
++		nextSpawn.set(Calendar.HOUR_OF_DAY, 20);
++		nextSpawn.set(Calendar.MINUTE, 0);
++		nextSpawn.set(Calendar.SECOND, 0);
++		nextSpawn.set(Calendar.DAY_OF_WEEK, Calendar.FRIDAY);
+ 		
+-		Calendar reenter = day1;
+-		if (day2.before(day1))
++		// If Friday 20:00 already passed this week, move to next week
++		if (nextSpawn.getTimeInMillis() < System.currentTimeMillis())
+ 		{
+-			reenter = day2;
++			nextSpawn.add(Calendar.WEEK_OF_YEAR, 1);
+ 		}
+ 		
+-		return reenter.getTimeInMillis() - System.currentTimeMillis();
++		return nextSpawn.getTimeInMillis();
+ 	}
+ 	
+ 	public static void main(String[] args)
+ 	{
+ 		new Anakim();
+ 	}
+-}
++}
+\ No newline at end of file
+diff --git dist/game/data/scripts/ai/bosses/Anakim/AnakimBoss.java dist/game/data/scripts/ai/bosses/Anakim/AnakimBoss.java
+index c30df460e2e..81e13cb0f49 100644
+--- dist/game/data/scripts/ai/bosses/Anakim/AnakimBoss.java
++++ dist/game/data/scripts/ai/bosses/Anakim/AnakimBoss.java
+@@ -32,6 +32,8 @@ import org.l2jmobius.gameserver.util.MathUtil;
+ 
+ /**
+  * @author NviX
++ * @URL https://web.archive.org/web/20170314173542/http://boards.lineage2.com/showpost.php?p=3386784&postcount=6 <br>
++ * @video http://www.youtube.com/watch?v=LecymFTJQzQ
+  */
+ public class AnakimBoss extends Script
+ {
+diff --git dist/game/data/scripts/ai/bosses/Lilith/31110.html dist/game/data/scripts/ai/bosses/Lilith/31110.html
+index 09fd7a41f87..deff61eeb0e 100644
+--- dist/game/data/scripts/ai/bosses/Lilith/31110.html
++++ dist/game/data/scripts/ai/bosses/Lilith/31110.html
+@@ -1,4 +1,5 @@
+-<html><body>Gatekeeper Ziggurat:<br
+->A human-like voice comes from a glowing blue orb:<br>
+-<Button ALIGN=LEFT ICON="NORMAL" action="bypass -h npc_%objectId%_Quest Lilith">"I kinda want to teleport inside."</Button>
++<html><body>Gatekeeper Ziggurat:<br>
++A human-like voice comes from a glowing blue orb:<br>
++Behold the gateway to the Forbidden Sacred Area! My job is to guard it, and you cannot pass without my permission.<br>
++<Button ALIGN=LEFT ICON="NORMAL" action="bypass -h npc_%objectId%_Quest Lilith">"I kinda wanna teleport inside."</Button>
+ </body></html>
+\ No newline at end of file
+diff --git dist/game/data/scripts/ai/bosses/Lilith/Lilith.java dist/game/data/scripts/ai/bosses/Lilith/Lilith.java
+index 52e033cc2e5..f221d0efd75 100644
+--- dist/game/data/scripts/ai/bosses/Lilith/Lilith.java
++++ dist/game/data/scripts/ai/bosses/Lilith/Lilith.java
+@@ -1,17 +1,14 @@
+ /*
+  * Copyright (c) 2013 L2jMobius
+- * 
+- * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * * Permission is hereby granted, free of charge, to any person obtaining a copy
+  * of this software and associated documentation files (the "Software"), to deal
+  * in the Software without restriction, including without limitation the rights
+  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  * copies of the Software, and to permit persons to whom the Software is
+  * furnished to do so, subject to the following conditions:
+- * 
+- * The above copyright notice and this permission notice shall be
++ * * The above copyright notice and this permission notice shall be
+  * included in all copies or substantial portions of the Software.
+- * 
+- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+@@ -22,10 +19,10 @@ package ai.bosses.Lilith;
+ 
+ import java.util.Calendar;
+ import java.util.Collection;
+-import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ import org.l2jmobius.gameserver.ai.Intention;
+-import org.l2jmobius.gameserver.config.GrandBossConfig;
+ import org.l2jmobius.gameserver.managers.GrandBossManager;
+ import org.l2jmobius.gameserver.managers.MapRegionManager;
+ import org.l2jmobius.gameserver.managers.ZoneManager;
+@@ -38,20 +35,17 @@ import org.l2jmobius.gameserver.model.actor.Npc;
+ import org.l2jmobius.gameserver.model.actor.Player;
+ import org.l2jmobius.gameserver.model.actor.enums.player.TeleportWhereType;
+ import org.l2jmobius.gameserver.model.actor.instance.GrandBoss;
+-import org.l2jmobius.gameserver.model.groups.Party;
+ import org.l2jmobius.gameserver.model.script.QuestTimer;
+ import org.l2jmobius.gameserver.model.script.Script;
+ import org.l2jmobius.gameserver.model.skill.AbnormalType;
+ import org.l2jmobius.gameserver.model.skill.Skill;
++import org.l2jmobius.gameserver.model.skill.holders.SkillHolder;
+ import org.l2jmobius.gameserver.model.zone.ZoneType;
+-import org.l2jmobius.gameserver.network.serverpackets.NpcHtmlMessage;
+ import org.l2jmobius.gameserver.util.ArrayUtil;
+ 
+ /**
+- * Lilith AI
+- * @author LasTravel, NviX
+- * @URL http://boards.lineage2.com/showpost.php?p=3386784&postcount=6<br>
+- * @video https://www.youtube.com/watch?v=H3MuIwUjjD4
++ * Lilith Manager AI - version 2023
++ * @author Notorion
+  */
+ public class Lilith extends Script
+ {
+@@ -64,6 +58,11 @@ public class Lilith extends Script
+ 	private static final int LILITH = 29336;
+ 	private static final int EXIST_CUBIC = 31124;
+ 	private static final int LILITH_CUBIC = 31118;
++	
++	// General Configs
++	private static final int MIN_LEVEL_TO_ATTACK = 110;
++	
++	// Minions
+ 	// @formatter:off
+ 	private static final int[] LILITH_MINIONS = {29337, 29338, 29339};
+ 	// @formatter:on
+@@ -72,17 +71,36 @@ public class Lilith extends Script
+ 		LILITH,
+ 		LILITH_MINIONS[0],
+ 		LILITH_MINIONS[1],
++		LILITH_MINIONS[2]
+ 	};
+ 	
+-	// Misc
+-	private static final Location ENTER_LILITH_LOC = new Location(184449, -9032, -5499);
++	// Locations
++	private static final Location ENTER_LILITH_LOC = new Location(-6687, 21271, -5488);
++	private static final Location SPAWN_LOC = new Location(-6682, 22181, -5488, 49151);
++	private static final Location KICK_LOC = new Location(-14051, 22195, -3616);
++	
+ 	private static final ZoneType BOSS_ZONE = ZoneManager.getInstance().getZoneById(12005);
+-	private static final ZoneType PRE_LILITH_ZONE = ZoneManager.getInstance().getZoneById(12006);
+ 	
+-	// Others
++	// Barrier Skills
++	private static final SkillHolder BARRIER_INITIAL = new SkillHolder(29518, 1);
++	private static final SkillHolder BARRIER_TIMED = new SkillHolder(29515, 1);
++	
++	// Barrier Configuration
++	private static final int HITS_TO_BREAK_INITIAL = 2000; // Hits to break immunity
++	private static final int HITS_TO_BREAK_TIMED = 2000; // Hits to break timed barrier
++	private static final long TIME_VULNERABLE = 3 * 60000; // Vulnerable duration (3 min)
++	private static final long TIME_BARRIER_LIMIT = 10 * 60000; // Max barrier duration (10 min)
++	private static final long TIME_RESET_INACTIVITY = 10 * 60000; // Reset if inactive
++	
++	// Variables
+ 	private static long _lastAction;
+ 	private static Npc _lilithBoss;
+-	private GrandBoss _tempLilith = null;
++	
++	// Barrier Controls
++	private boolean _isInitialBarrier = false;
++	private boolean _isTimedBarrier = false;
++	private final Map<Npc, Integer> _hitCounter = new ConcurrentHashMap<>();
++	private long _lastHitTime = 0;
+ 	
+ 	public Lilith()
+ 	{
+@@ -93,29 +111,56 @@ public class Lilith extends Script
+ 		addKillId(ALL_MOBS);
+ 		addSkillSeeId(ALL_MOBS);
+ 		
+-		// Unlock
+ 		final StatSet info = GrandBossManager.getInstance().getStatSet(LILITH);
+ 		final int status = GrandBossManager.getInstance().getStatus(LILITH);
++		
+ 		if (status == DEAD)
+ 		{
+-			final long time = info.getLong("respawn_time") - System.currentTimeMillis();
+-			if (time > 0)
++			long respawnTime = info.getLong("respawn_time");
++			if (respawnTime == 0)
+ 			{
+-				startQuestTimer("unlock_lilith", time, null, null);
++				respawnTime = getNextRespawnTime();
++				info.set("respawn_time", respawnTime);
++				GrandBossManager.getInstance().setStatSet(LILITH, info);
++			}
++			
++			final long delay = respawnTime - System.currentTimeMillis();
++			if (delay > 0)
++			{
++				startQuestTimer("unlock_lilith", delay, null, null);
++				System.out.println("GrandBossManager: Lilith spawn scheduled in " + (delay / 60000) + " minutes.");
+ 			}
+ 			else
+ 			{
+-				_tempLilith = (GrandBoss) addSpawn(LILITH, -126920, -234182, -15563, 0, false, 0);
+-				GrandBossManager.getInstance().addBoss(_tempLilith);
+-				GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
++				spawnLilith();
+ 			}
+ 		}
+ 		else
+ 		{
+-			_tempLilith = (GrandBoss) addSpawn(LILITH, -126920, -234182, -15563, 0, false, 0);
+-			GrandBossManager.getInstance().addBoss(_tempLilith);
+-			GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
++			spawnLilith();
++		}
++	}
++	
++	private void spawnLilith()
++	{
++		GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
++		
++		if ((_lilithBoss != null) && !_lilithBoss.isDead())
++		{
++			return;
+ 		}
++		
++		_lilithBoss = addSpawn(LILITH, SPAWN_LOC, false, 0);
++		GrandBossManager.getInstance().addBoss((GrandBoss) _lilithBoss);
++		
++		// Immobilize Boss
++		_lilithBoss.setRandomWalking(false);
++		_lilithBoss.setRandomAnimation(false);
++		
++		applyInitialBarrier(_lilithBoss);
++		
++		_lastAction = System.currentTimeMillis();
++		startQuestTimer("check_activity_task", 60000, null, null);
+ 	}
+ 	
+ 	@Override
+@@ -125,68 +170,67 @@ public class Lilith extends Script
+ 		{
+ 			case "unlock_lilith":
+ 			{
+-				_tempLilith = (GrandBoss) addSpawn(LILITH, -126920, -234182, -15563, 0, false, 0);
+-				GrandBossManager.getInstance().addBoss(_tempLilith);
+-				GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
++				spawnLilith();
+ 				break;
+ 			}
+ 			case "check_activity_task":
+ 			{
+-				if ((_lastAction + 900000) < System.currentTimeMillis())
++				// Reset logic
++				if ((_lastAction + TIME_RESET_INACTIVITY) < System.currentTimeMillis())
+ 				{
+-					GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
+-					for (Creature creature : BOSS_ZONE.getCharactersInside())
++					if ((_lilithBoss != null) && !_lilithBoss.isDead())
+ 					{
+-						if (creature != null)
++						boolean isFighting = GrandBossManager.getInstance().getStatus(LILITH) == FIGHTING;
++						boolean isDamaged = _lilithBoss.getCurrentHp() < _lilithBoss.getMaxHp();
++						
++						if (isFighting || isDamaged)
+ 						{
+-							if (creature.isNpc())
+-							{
+-								creature.deleteMe();
+-							}
+-							else if (creature.isPlayer())
+-							{
+-								creature.teleToLocation(MapRegionManager.getInstance().getTeleToLocation(creature, TeleportWhereType.TOWN));
+-							}
++							resetLilith(_lilithBoss);
+ 						}
+ 					}
+-					
+-					startQuestTimer("end_lilith", 2000, null, null);
+ 				}
+ 				else
+ 				{
++					// Minion Logic
++					boolean isBossAlive = ((_lilithBoss != null) && !_lilithBoss.isDead());
++					boolean isNotFighting = GrandBossManager.getInstance().getStatus(LILITH) != FIGHTING;
++					boolean hasPlayers = ((BOSS_ZONE != null) && !BOSS_ZONE.getPlayersInside().isEmpty());
++					
++					if (isBossAlive && isNotFighting && hasPlayers)
++					{
++						manageMinions(_lilithBoss);
++					}
++					
+ 					startQuestTimer("check_activity_task", 60000, null, null);
+ 				}
+ 				break;
+ 			}
+-			case "cancel_timers":
++			case "END_VULNERABILITY":
+ 			{
+-				QuestTimer activityTimer = getQuestTimer("check_activity_task", null, null);
+-				if (activityTimer != null)
++				if ((npc != null) && !npc.isDead())
+ 				{
+-					activityTimer.cancel();
++					applyTimedBarrier(npc);
+ 				}
+-				
+-				QuestTimer forceEnd = getQuestTimer("end_lilith", null, null);
+-				if (forceEnd != null)
++				break;
++			}
++			case "END_TIMED_BARRIER":
++			{
++				if ((npc != null) && !npc.isDead() && _isTimedBarrier)
+ 				{
+-					forceEnd.cancel();
++					applyTimedBarrier(npc);
+ 				}
+ 				break;
+ 			}
+-			case "end_lilith":
++			case "cancel_timers":
+ 			{
+-				notifyEvent("cancel_timers", null, null);
+-				if (_lilithBoss != null)
++				QuestTimer activityTimer = getQuestTimer("check_activity_task", null, null);
++				if (activityTimer != null)
+ 				{
+-					_lilithBoss.deleteMe();
++					activityTimer.cancel();
+ 				}
+ 				
+-				BOSS_ZONE.oustAllPlayers();
+-				PRE_LILITH_ZONE.oustAllPlayers();
+-				if (GrandBossManager.getInstance().getStatus(LILITH) != DEAD)
+-				{
+-					GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
+-				}
++				cancelQuestTimers("END_VULNERABILITY");
++				cancelQuestTimers("END_TIMED_BARRIER");
+ 				break;
+ 			}
+ 			case "exist":
+@@ -195,100 +239,152 @@ public class Lilith extends Script
+ 				break;
+ 			}
+ 		}
+-		
+ 		return super.onEvent(event, npc, player);
+ 	}
+ 	
+-	@Override
+-	public String onTalk(Npc npc, Player player)
++	private void manageMinions(Npc boss)
+ 	{
+-		final int _lilithStatus = GrandBossManager.getInstance().getStatus(LILITH);
+-		if ((npc.getId() == LILITH_CUBIC) && (_lilithStatus > ALIVE))
++		if (BOSS_ZONE == null)
+ 		{
+-			return "31118-01.html";
++			return;
+ 		}
+ 		
+-		if (!player.isInParty())
++		for (Creature c : BOSS_ZONE.getCharactersInside())
+ 		{
+-			final NpcHtmlMessage packet = new NpcHtmlMessage(npc.getObjectId());
+-			packet.setHtml(getHtm(player, "31118-02.html"));
+-			packet.replace("%min%", Integer.toString(GrandBossConfig.LILITH_MIN_PLAYERS));
+-			player.sendPacket(packet);
+-			return null;
++			if ((c != null) && c.isNpc() && !c.isDead())
++			{
++				if (ArrayUtil.contains(LILITH_MINIONS, c.getId()))
++				{
++					// Blink Effect
++					int x = boss.getX() + getRandom(-150, 150);
++					int y = boss.getY() + getRandom(-150, 150);
++					c.teleToLocation(x, y, boss.getZ());
++				}
++			}
+ 		}
+-		
+-		final Party party = player.getParty();
+-		final boolean isInCC = party.isInCommandChannel();
+-		final List<Player> members = (isInCC) ? party.getCommandChannel().getMembers() : party.getMembers();
+-		final boolean isPartyLeader = (isInCC) ? party.getCommandChannel().isLeader(player) : party.isLeader(player);
+-		if (!isPartyLeader)
++	}
++	
++	private void resetLilith(Npc npc)
++	{
++		if (GrandBossManager.getInstance().getStatus(LILITH) != ALIVE)
+ 		{
+-			return "31118-03.html";
++			GrandBossManager.getInstance().setStatus(LILITH, ALIVE);
+ 		}
+ 		
+-		if ((members.size() < GrandBossConfig.LILITH_MIN_PLAYERS) || (members.size() > GrandBossConfig.LILITH_MAX_PLAYERS))
+-		{
+-			final NpcHtmlMessage packet = new NpcHtmlMessage(npc.getObjectId());
+-			packet.setHtml(getHtm(player, "31118-02.html"));
+-			packet.replace("%min%", Integer.toString(GrandBossConfig.LILITH_MIN_PLAYERS));
+-			player.sendPacket(packet);
+-			return null;
+-		}
++		npc.setCurrentHp(npc.getMaxHp());
++		npc.setCurrentMp(npc.getMaxMp());
++		npc.teleToLocation(SPAWN_LOC, true);
++		npc.stopAllEffects();
+ 		
+-		for (Player member : members)
++		if (npc.isAttackable())
+ 		{
+-			if (member.getLevel() < GrandBossConfig.LILITH_MIN_PLAYER_LEVEL)
+-			{
+-				final NpcHtmlMessage packet = new NpcHtmlMessage(npc.getObjectId());
+-				packet.setHtml(getHtm(player, "31118-04.html"));
+-				packet.replace("%minLevel%", Integer.toString(GrandBossConfig.LILITH_MIN_PLAYER_LEVEL));
+-				player.sendPacket(packet);
+-				return null;
+-			}
++			npc.asAttackable().clearAggroList();
+ 		}
+ 		
+-		for (Player member : members)
++		if (BOSS_ZONE != null)
+ 		{
+-			if (member.isInsideRadius3D(npc, 1000) && (npc.getId() == LILITH_CUBIC))
++			for (Creature c : BOSS_ZONE.getCharactersInside())
+ 			{
+-				member.teleToLocation(ENTER_LILITH_LOC, true);
++				if ((c != null) && c.isPlayer())
++				{
++					c.teleToLocation(MapRegionManager.getInstance().getTeleToLocation(c, TeleportWhereType.TOWN));
++				}
+ 			}
+ 		}
+ 		
+-		if ((_lilithStatus == ALIVE) && (npc.getId() == LILITH_CUBIC))
++		applyInitialBarrier(npc);
++		_lastAction = System.currentTimeMillis();
++		startQuestTimer("check_activity_task", 60000, null, null);
++	}
++	
++	@Override
++	public String onTalk(Npc npc, Player player)
++	{
++		if (npc.getId() == LILITH_CUBIC)
+ 		{
+-			GrandBossManager.getInstance().setStatus(LILITH, FIGHTING);
+-			
+-			// Spawn the rb
+-			_lilithBoss = addSpawn(LILITH, 185062, -9605, -5499, 15640, false, 0);
+-			GrandBossManager.getInstance().addBoss((GrandBoss) _lilithBoss);
+-			_lastAction = System.currentTimeMillis();
+-			startQuestTimer("check_activity_task", 60000, null, null, true);
+-			startQuestTimer("end_lilith", 60 * 60000, null, null); // 1h
++			player.teleToLocation(ENTER_LILITH_LOC, true);
++			return null;
+ 		}
+-		
+ 		return super.onTalk(npc, player);
+ 	}
+ 	
++	@Override
++	public String onFirstTalk(Npc npc, Player player)
++	{
++		return npc.getId() + ".html";
++	}
++	
+ 	@Override
+ 	public void onAttack(Npc npc, Player attacker, int damage, boolean isPet)
+ 	{
+ 		_lastAction = System.currentTimeMillis();
+-		if (npc.isMinion() || npc.isRaid()) // Lilith and minions
++		
++		// Level Check
++		if (attacker.getLevel() < MIN_LEVEL_TO_ATTACK)
+ 		{
+-			// Anti BUGGERS
+-			if (!BOSS_ZONE.isInsideZone(attacker)) // Character attacking out of zone
++			attacker.teleToLocation(KICK_LOC, true);
++			return;
++		}
++		
++		if (npc.getId() == LILITH)
++		{
++			if (GrandBossManager.getInstance().getStatus(LILITH) != FIGHTING)
+ 			{
+-				attacker.doDie(null);
++				GrandBossManager.getInstance().setStatus(LILITH, FIGHTING);
++			}
++			
++			// Wake up Minions
++			if (BOSS_ZONE != null)
++			{
++				for (Creature c : BOSS_ZONE.getCharactersInside())
++				{
++					if ((c != null) && c.isNpc() && !c.isDead())
++					{
++						if (ArrayUtil.contains(LILITH_MINIONS, c.getId()))
++						{
++							c.asAttackable().addDamageHate(attacker, 0, 999);
++							c.getAI().setIntention(Intention.ATTACK, attacker);
++						}
++					}
++				}
+ 			}
+ 			
+-			if (!BOSS_ZONE.isInsideZone(npc)) // Npc moved out of the zone
++			if (_isInitialBarrier || _isTimedBarrier)
++			{
++				if ((System.currentTimeMillis() - _lastHitTime) > 60000)
++				{
++					_hitCounter.put(npc, 0);
++				}
++				_lastHitTime = System.currentTimeMillis();
++				
++				int hits = _hitCounter.merge(npc, 1, Integer::sum);
++				int required = _isInitialBarrier ? HITS_TO_BREAK_INITIAL : HITS_TO_BREAK_TIMED;
++				
++				if (hits >= required)
++				{
++					enterVulnerableState(npc);
++				}
++			}
++		}
++		
++		// Anti-Kite
++		if (npc.isMinion() || npc.isRaid())
++		{
++			if ((BOSS_ZONE != null) && !BOSS_ZONE.isInsideZone(attacker))
++			{
++				attacker.doDie(null);
++			}
++			if ((BOSS_ZONE != null) && !BOSS_ZONE.isInsideZone(npc))
+ 			{
+ 				Spawn spawn = npc.getSpawn();
+ 				if (spawn != null)
+ 				{
+ 					npc.teleToLocation(spawn.getX(), spawn.getY(), spawn.getZ());
+ 				}
++				else
++				{
++					npc.teleToLocation(SPAWN_LOC, true);
++				}
+ 			}
+ 		}
+ 	}
+@@ -299,16 +395,20 @@ public class Lilith extends Script
+ 		if (npc.getId() == LILITH)
+ 		{
+ 			notifyEvent("cancel_timers", null, null);
+-			addSpawn(EXIST_CUBIC, 185062, -9605, -5499, 15640, false, 900000); // 15min
++			
++			// Fix: Spawn Cubic at Boss location
++			addSpawn(EXIST_CUBIC, npc.getLocation(), false, 900000);
+ 			
+ 			GrandBossManager.getInstance().setStatus(LILITH, DEAD);
+-			final long respawnTime = getRespawnTime();
++			
++			final long respawnTime = getNextRespawnTime();
+ 			final StatSet info = GrandBossManager.getInstance().getStatSet(LILITH);
+-			info.set("respawn_time", System.currentTimeMillis() + respawnTime);
++			info.set("respawn_time", respawnTime);
+ 			GrandBossManager.getInstance().setStatSet(LILITH, info);
+ 			
+-			startQuestTimer("unlock_lilith", respawnTime, null, null);
+-			startQuestTimer("end_lilith", 900000, null, null);
++			startQuestTimer("unlock_lilith", respawnTime - System.currentTimeMillis(), null, null);
++			
++			_lilithBoss = null;
+ 		}
+ 	}
+ 	
+@@ -330,51 +430,86 @@ public class Lilith extends Script
+ 		}
+ 	}
+ 	
+-	private int getRespawnTime()
++	private void applyInitialBarrier(Npc npc)
+ 	{
+-		return (int) calcReuseFromDays(0, 21, Calendar.THURSDAY, 0, 14, Calendar.SATURDAY);
++		cleanBarriers(npc);
++		_isInitialBarrier = true;
++		_isTimedBarrier = false;
++		_hitCounter.put(npc, 0);
++		
++		npc.setInvul(true);
++		if (BARRIER_INITIAL.getSkill() != null)
++		{
++			BARRIER_INITIAL.getSkill().applyEffects(npc, npc);
++		}
++		
++		cancelQuestTimer("END_VULNERABILITY", npc, null);
++		cancelQuestTimer("END_TIMED_BARRIER", npc, null);
+ 	}
+ 	
+-	private long calcReuseFromDays(int day1Minute, int day1Hour, int day1Day, int day2Minute, int day2Hour, int day2Day)
++	private void applyTimedBarrier(Npc npc)
+ 	{
+-		Calendar now = Calendar.getInstance();
+-		Calendar day1 = (Calendar) now.clone();
+-		day1.set(Calendar.MINUTE, day1Minute);
+-		day1.set(Calendar.HOUR_OF_DAY, day1Hour);
+-		day1.set(Calendar.DAY_OF_WEEK, day1Day);
+-		
+-		Calendar day2 = (Calendar) day1.clone();
+-		day2.set(Calendar.MINUTE, day2Minute);
+-		day2.set(Calendar.HOUR_OF_DAY, day2Hour);
+-		day2.set(Calendar.DAY_OF_WEEK, day2Day);
++		cleanBarriers(npc);
++		_isInitialBarrier = false;
++		_isTimedBarrier = true;
++		_hitCounter.put(npc, 0);
+ 		
+-		if (now.after(day1))
++		npc.setInvul(true);
++		if (BARRIER_TIMED.getSkill() != null)
+ 		{
+-			day1.add(Calendar.WEEK_OF_MONTH, 1);
++			BARRIER_TIMED.getSkill().applyEffects(npc, npc);
+ 		}
+ 		
+-		if (now.after(day2))
++		startQuestTimer("END_TIMED_BARRIER", TIME_BARRIER_LIMIT, npc, null);
++	}
++	
++	private void enterVulnerableState(Npc npc)
++	{
++		cleanBarriers(npc);
++		_isInitialBarrier = false;
++		_isTimedBarrier = false;
++		_hitCounter.put(npc, 0);
++		
++		npc.setInvul(false);
++		startQuestTimer("END_VULNERABILITY", TIME_VULNERABLE, npc, null);
++	}
++	
++	private void cleanBarriers(Npc npc)
++	{
++		if (BARRIER_INITIAL.getSkill() != null)
+ 		{
+-			day2.add(Calendar.WEEK_OF_MONTH, 1);
++			npc.stopSkillEffects(BARRIER_INITIAL.getSkill());
+ 		}
+-		
+-		Calendar reenter = day1;
+-		if (day2.before(day1))
++		if (BARRIER_TIMED.getSkill() != null)
+ 		{
+-			reenter = day2;
++			npc.stopSkillEffects(BARRIER_TIMED.getSkill());
+ 		}
+-		
+-		return reenter.getTimeInMillis() - System.currentTimeMillis();
++		npc.setInvul(false);
+ 	}
+ 	
+-	@Override
+-	public String onFirstTalk(Npc npc, Player player)
++	// NEW SCHEDULE: Saturday 20:00
++	private long getNextRespawnTime()
+ 	{
+-		return npc.getId() + ".html";
++		Calendar now = Calendar.getInstance();
++		
++		// Set to Saturday 20:00
++		Calendar nextSpawn = (Calendar) now.clone();
++		nextSpawn.set(Calendar.HOUR_OF_DAY, 20);
++		nextSpawn.set(Calendar.MINUTE, 0);
++		nextSpawn.set(Calendar.SECOND, 0);
++		nextSpawn.set(Calendar.DAY_OF_WEEK, Calendar.SATURDAY);
++		
++		// If Saturday 20:00 already passed this week, move to next week
++		if (nextSpawn.getTimeInMillis() < System.currentTimeMillis())
++		{
++			nextSpawn.add(Calendar.WEEK_OF_YEAR, 1);
++		}
++		
++		return nextSpawn.getTimeInMillis();
+ 	}
+ 	
+ 	public static void main(String[] args)
+ 	{
+ 		new Lilith();
+ 	}
+-}
++}
+\ No newline at end of file
+diff --git dist/game/data/scripts/ai/bosses/Lilith/LilithBoss.java dist/game/data/scripts/ai/bosses/Lilith/LilithBoss.java
+index 691ad44d93f..75bed773d7e 100644
+--- dist/game/data/scripts/ai/bosses/Lilith/LilithBoss.java
++++ dist/game/data/scripts/ai/bosses/Lilith/LilithBoss.java
+@@ -32,6 +32,8 @@ import org.l2jmobius.gameserver.util.MathUtil;
+ 
+ /**
+  * @author NviX
++ * @URL https://web.archive.org/web/20170314173542/http://boards.lineage2.com/showpost.php?p=3386784&postcount=6 <br>
++ * @video https://www.youtube.com/watch?v=H3MuIwUjjD4
+  */
+ public class LilithBoss extends Script
+ {
+diff --git dist/game/data/zones/custom_script.xml dist/game/data/zones/custom_script.xml
+index 6be6765c4db..e61c25bda7d 100644
+--- dist/game/data/zones/custom_script.xml
++++ dist/game/data/zones/custom_script.xml
+@@ -993,11 +993,11 @@
+ 		<node X="213068" Y="114628" />
+ 		<node X="213058" Y="115891" />
+ 	</zone>
+-	<zone name="Anakim" id="12003" type="ScriptZone" shape="NPoly" minZ="-5500" maxZ="-4600">
+-		<node X="183904" Y="-13884" />
+-		<node X="186265" Y="-13884" />
+-		<node X="186245" Y="-11263" />
+-		<node X="183944" Y="-11283" />
++	<zone name="Anakim_12003" id="12003" type="ScriptZone" shape="NPoly" minZ="-6500" maxZ="-4600">
++		<node X="183738" Y="-13897" />
++		<node X="186390" Y="-13892" />
++		<node X="186376" Y="-8713" />
++		<node X="183720" Y="-8713" />
+ 	</zone>
+ 	<zone name="Pre Anakim" id="12004" type="ScriptZone" shape="NPoly" minZ="-4950" maxZ="-4420">
+ 		<node X="172102" Y="-18083" />
+@@ -1005,11 +1005,11 @@
+ 		<node X="183544" Y="-6702" />
+ 		<node X="171976" Y="-6743" />
+ 	</zone>
+-	<zone name="Lilith" id="12005" type="ScriptZone" shape="NPoly" minZ="-5500" maxZ="-4600">
+-		<node X="183904" Y="-10883" />
+-		<node X="186245" Y="-10903" />
+-		<node X="186265" Y="-8223" />
+-		<node X="183924" Y="-8203" />
++	<zone name="Lilith" id="12005" type="ScriptZone" shape="NPoly" minZ="-6500" maxZ="-4600">
++		<node X="-5576" Y="22609" />
++		<node X="-7796" Y="22618" />
++		<node X="-7814" Y="20382" />
++		<node X="-5585" Y="20334" />
+ 	</zone>
+ 	<zone name="Pre Lilith" id="12006" type="ScriptZone" shape="NPoly" minZ="-5000" maxZ="-4300">
+ 		<node X="-19545" Y="12943" />
+diff --git dist/game/data/zones/no_landing.xml dist/game/data/zones/no_landing.xml
+index 92cbe58f663..3db0d22babd 100644
+--- dist/game/data/zones/no_landing.xml
++++ dist/game/data/zones/no_landing.xml
+@@ -58,17 +58,17 @@
+ 		<node X="-98296" Y="-262136" />
+ 		<node X="-65544" Y="-229384" />
+ 	</zone>
+-	<zone name="Lilith_pvp" type="NoLandingZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
+-		<node X="-5776" Y="22409" />
+-		<node X="-7596" Y="22418" />
+-		<node X="-7614" Y="20582" />
+-		<node X="-5785" Y="20534" />
+-	</zone>
+-	<zone name="Anakim_pvp" type="NoLandingZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
+-		<node X="186046" Y="-13548" />
+-		<node X="186055" Y="-11686" />
+-		<node X="184163" Y="-11640" />
+-		<node X="184082" Y="-13600" />
++	<zone name="Lilith_NoLandingZone" type="NoLandingZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
++		<node X="-5576" Y="22609" />
++		<node X="-7796" Y="22618" />
++		<node X="-7814" Y="20382" />
++		<node X="-5585" Y="20334" />
++	</zone>
++	<zone name="Anakim_NoLandingZone" type="NoLandingZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
++		<node X="183738" Y="-13897" />
++		<node X="186390" Y="-13892" />
++		<node X="186376" Y="-8713" />
++		<node X="183720" Y="-8713" />
+ 	</zone>
+ 	
+ 	<!-- Spirit Seal zones -->
+diff --git dist/game/data/zones/no_summon_friend.xml dist/game/data/zones/no_summon_friend.xml
+index b692c325879..ad63c145e1f 100644
+--- dist/game/data/zones/no_summon_friend.xml
++++ dist/game/data/zones/no_summon_friend.xml
+@@ -195,17 +195,17 @@
+ 		<node X="128248" Y="116984" />
+ 		<node X="126248" Y="115736" />
+ 	</zone>
+-	<zone name="Lilith_pvp" type="NoSummonFriendZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
+-		<node X="-5776" Y="22409" />
+-		<node X="-7596" Y="22418" />
+-		<node X="-7614" Y="20582" />
+-		<node X="-5785" Y="20534" />
+-	</zone>
+-	<zone name="Anakim_pvp" type="NoSummonFriendZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
+-		<node X="186046" Y="-13548" />
+-		<node X="186055" Y="-11686" />
+-		<node X="184163" Y="-11640" />
+-		<node X="184082" Y="-13600" />
++	<zone name="Lilith_NoSummonFriendZone" type="NoSummonFriendZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
++		<node X="-5576" Y="22609" />
++		<node X="-7796" Y="22618" />
++		<node X="-7814" Y="20382" />
++		<node X="-5585" Y="20334" />
++	</zone>
++	<zone name="Anakim_NoSummonFriendZone" type="NoSummonFriendZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Anakim -->
++		<node X="183738" Y="-13897" />
++		<node X="186390" Y="-13892" />
++		<node X="186376" Y="-8713" />
++		<node X="183720" Y="-8713" />
+ 	</zone>
+ 	<zone name="Orfen_zone_no_summon_friend" type="NoSummonFriendZone" shape="NPoly" minZ="-3000" maxZ="-9000"> <!-- Orfen -->
+ 		<node X="47013" Y="18796" />
+diff --git dist/game/data/zones/pvp.xml dist/game/data/zones/pvp.xml
+index 229136096e6..6fa6659766b 100644
+--- dist/game/data/zones/pvp.xml
++++ dist/game/data/zones/pvp.xml
+@@ -54,20 +54,16 @@
+ 		<node X="65720" Y="23000" />
+ 	</zone>
+ 	<zone name="lilith_pvp" type="ArenaZone" shape="NPoly" minZ="-3752" maxZ="-9000"> <!-- Lilith -->
+-		<node X="-5510" Y="20236" />
+-		<node X="-5538" Y="20297" />
+-		<node X="-5483" Y="22637" />
+-		<node X="-5497" Y="22638" />
+-		<node X="-7906" Y="22602" />
+-		<node X="-7892" Y="22626" />
+-		<node X="-7773" Y="20268" />
+-		<node X="-7857" Y="20321" />
++		<node X="-5576" Y="22609" />
++		<node X="-7796" Y="22618" />
++		<node X="-7814" Y="20382" />
++		<node X="-5585" Y="20334" />
+ 	</zone>
+ 	<zone name="anakim_pvp" type="ArenaZone" shape="NPoly" minZ="-6000" maxZ="-4000"> <!-- Anakim -->
+-		<node X="183938" Y="-13697" />
+-		<node X="186190" Y="-13692" />
+-		<node X="186176" Y="-8513" />
+-		<node X="183920" Y="-8513" />
++		<node X="183738" Y="-13897" />
++		<node X="186390" Y="-13892" />
++		<node X="186376" Y="-8713" />
++		<node X="183720" Y="-8713" />
+ 	</zone>
+ 	<zone name="ishka_pvp" type="ArenaZone" shape="NPoly" minZ="-3000" maxZ="-9000"> <!-- Lord Ishka -->
+ 		<node X="127449" Y="112036" />
