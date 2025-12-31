@@ -1,0 +1,1734 @@
+diff --git dist/game/data/scripts/ai/bosses/Atrus/AtrusBoss.java dist/game/data/scripts/ai/bosses/Atrus/AtrusBoss.java
+new file mode 100644
+index 00000000000..78f9dc8424b
+--- /dev/null
++++ dist/game/data/scripts/ai/bosses/Atrus/AtrusBoss.java
+@@ -0,0 +1,984 @@
++/*
++ * Copyright (c) 2013 L2jMobius
++ * 
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ * 
++ * The above copyright notice and this permission notice shall be
++ * included in all copies or substantial portions of the Software.
++ * 
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++ * IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++package ai.bosses.Atrus;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import org.l2jmobius.commons.util.Rnd;
++import org.l2jmobius.gameserver.ai.Intention;
++import org.l2jmobius.gameserver.managers.GlobalVariablesManager;
++import org.l2jmobius.gameserver.managers.ZoneManager;
++import org.l2jmobius.gameserver.model.Location;
++import org.l2jmobius.gameserver.model.World;
++import org.l2jmobius.gameserver.model.actor.Attackable;
++import org.l2jmobius.gameserver.model.actor.Creature;
++import org.l2jmobius.gameserver.model.actor.Npc;
++import org.l2jmobius.gameserver.model.actor.Player;
++import org.l2jmobius.gameserver.model.script.Script;
++import org.l2jmobius.gameserver.model.skill.Skill;
++import org.l2jmobius.gameserver.model.skill.SkillCaster;
++import org.l2jmobius.gameserver.model.skill.enums.FlyType;
++import org.l2jmobius.gameserver.model.skill.holders.SkillHolder;
++import org.l2jmobius.gameserver.model.zone.ZoneType;
++import org.l2jmobius.gameserver.network.NpcStringId;
++import org.l2jmobius.gameserver.network.serverpackets.ExChangeClientEffectInfo;
++import org.l2jmobius.gameserver.network.serverpackets.ExShowScreenMessage;
++import org.l2jmobius.gameserver.network.serverpackets.FlyToLocation;
++import org.l2jmobius.gameserver.network.serverpackets.TargetUnselected;
++import org.l2jmobius.gameserver.network.serverpackets.ValidateLocation;
++
++/**
++ * Atrus RaidBoss AI - Version 2025
++ * @author Notorion
++ */
++
++public class AtrusBoss extends Script
++{
++	// NPC IDs
++	private static final int ATRUS = 29433; // Atrus - RaidBoss
++	private static final int CHAOS_SEAL = 29434; // Chaotic Seal - Npc
++	private static final int POWER_SEAL = 29435; // Chaotic Seal - Npc
++	
++	// Weapon Polearm - Atrus phase 2
++	private static final int WEAPON_POLEARM_ID = 83344; // Kasha Orc Boss' Elite Stormer
++	
++	// Zones
++	private static final String ZONE_NAME_COMBAT = "AtrusZoneKashaOrcFortress"; // Atrus combat location
++	private static final String ZONE_NAME_VISUAL = "AtrusVisualZone"; // Broad area for status 2 and on-screen message
++	
++	// Global variable
++	private static final String ATRUS_VISUAL_VAR = "ATRUS_STORM_ACTIVE";
++	
++	// Locations
++	private static final Location SPAWN_LOC = new Location(-24586, -109012, -3000, 56219); // Atrus location
++	
++	private static final Location SEAL_LOC_1 = new Location(-25670, -109090, -3034); // Chaotic Seal id 29434 - Spawn
++	private static final Location SEAL_LOC_2 = new Location(-23558, -109121, -3033); // Chaotic Seal id 29434 - Spawn
++	
++	private static final Location POWER_SEAL_LOC_1 = new Location(-23507, -108706, -3033); // Chaotic Seal id 29435 - Spawn
++	private static final Location POWER_SEAL_LOC_2 = new Location(-24452, -107999, -3033); // Chaotic Seal id 29435 - Spawn
++	private static final Location POWER_SEAL_LOC_3 = new Location(-25601, -108986, -3032); // Chaotic Seal id 29435 - Spawn
++	private static final Location POWER_SEAL_LOC_4 = new Location(-24066, -110065, -3032); // Chaotic Seal id 29435 - Spawn
++	
++	// Skills - Phase 1
++	private static final SkillHolder KASHA_BASIC_ATTACK = new SkillHolder(62225, 1); // Kasha's Destruction (Blunt Weapon)
++	private static final SkillHolder KASHA_WAVE = new SkillHolder(62226, 1); // Kasha's Wave (Blunt Weapon)
++	private static final SkillHolder KASHA_SWEEP = new SkillHolder(62228, 1); // Kasha's Sweep (Blunt Weapon)
++	private static final SkillHolder KASHA_PULL = new SkillHolder(62227, 1); // Kasha's Pull (Blunt Weapon)
++	private static final SkillHolder KASHA_FRAY = new SkillHolder(62230, 1); // Kasha's Fray (Blunt Weapon)
++	
++	// Used for visual return effect
++	private static final SkillHolder KASHA_VISUAL_JUMP = new SkillHolder(62229, 1); // Kasha's Direct Attack (Blunt Weapon)
++	
++	// Skills - Phase 2
++	private static final SkillHolder KASHA_DESTRUCTION = new SkillHolder(62231, 1); // Kasha's Destruction (Stormer)
++	private static final SkillHolder KASHA_INNER_STORM = new SkillHolder(62232, 1); // Kasha's Inner Storm (Stormer)
++	private static final SkillHolder KASHA_OUTER_STORM = new SkillHolder(62233, 1); // Kasha's Outer Storm (Stormer)
++	
++	// Seals
++	private static final SkillHolder CHAOS_CURE = new SkillHolder(62234, 1); // Chaos Cure
++	
++	// Vars
++	private Npc _atrus = null;
++	
++	private final ZoneType _combatZone;
++	private final ZoneType _visualZone;
++	
++	// Flags
++	private boolean _isReturning = false;
++	private boolean _isMechanicActive = false;
++	private boolean _combatStarted = false;
++	
++	private boolean _phase1PermanentlyDisabled = false;
++	
++	// Triggers
++	private boolean _hp90Triggered = false;
++	private boolean _hp70Triggered = false;
++	private boolean _hp60Triggered = false;
++	private boolean _hp50Triggered = false;
++	private boolean _hp40Triggered = false;
++	
++	private long _lastReturnAttempt = 0;
++	private int _comboStep = 0;
++	
++	// Warmups Phase 2
++	private long _outerStormWarmup = 0;
++	private long _innerStormWarmup = 0;
++	private long _nextStormAvailable = 0;
++	
++	private final List<Npc> _activeSeals = new ArrayList<>();
++	private final List<Npc> _powerSeals = new ArrayList<>();
++	
++	public AtrusBoss()
++	{
++		_combatZone = ZoneManager.getInstance().getZoneByName(ZONE_NAME_COMBAT);
++		_visualZone = ZoneManager.getInstance().getZoneByName(ZONE_NAME_VISUAL);
++		
++		addSpawnId(ATRUS, CHAOS_SEAL);
++		addDespawnId(ATRUS);
++		addAttackId(ATRUS);
++		addKillId(ATRUS, CHAOS_SEAL, POWER_SEAL);
++		
++		if (_combatZone != null)
++		{
++			addEnterZoneId(_combatZone.getId());
++		}
++		if (_visualZone != null)
++		{
++			addEnterZoneId(_visualZone.getId());
++		}
++		
++		GlobalVariablesManager.getInstance().set(ATRUS_VISUAL_VAR, false);
++		
++		startQuestTimer("CHECK_BOUNDARIES", 1000, null, null, true);
++	}
++	
++	@Override
++	public void onSpawn(Npc npc)
++	{
++		if (npc.getId() == ATRUS)
++		{
++			_atrus = npc;
++			_atrus.setRandomWalking(false);
++			_atrus.setTargetable(true);
++			
++			if (_atrus.isAttackable())
++			{
++				_atrus.asAttackable().setCanReturnToSpawnPoint(false);
++			}
++			
++			_isReturning = false;
++			_isMechanicActive = false;
++			_combatStarted = false;
++			_phase1PermanentlyDisabled = false;
++			
++			_hp90Triggered = false;
++			_hp70Triggered = false;
++			_hp60Triggered = false;
++			_hp50Triggered = false;
++			_hp40Triggered = false;
++			
++			_lastReturnAttempt = 0;
++			_comboStep = 0;
++			_outerStormWarmup = 0;
++			_innerStormWarmup = 0;
++			_nextStormAvailable = 0;
++			
++			_activeSeals.clear();
++			_powerSeals.clear();
++			
++			if (_combatZone != null)
++			{
++				for (Npc n : World.getInstance().getVisibleObjects(npc, Npc.class))
++				{
++					if ((n.getId() == CHAOS_SEAL) || (n.getId() == POWER_SEAL))
++					{
++						if (_combatZone.isInsideZone(n))
++						{
++							n.deleteMe();
++						}
++					}
++				}
++			}
++			// 1. Activates the local visual of Kasha Orc Fortress
++			setVisualActive(true);
++			startQuestTimer("WATCH_VISUAL_STATUS", 1000, null, null, true);
++		}
++		else if (npc.getId() == CHAOS_SEAL)
++		{
++			if ((_atrus != null) && !_atrus.isDead())
++			{
++				npc.setTarget(_atrus);
++				npc.setRunning();
++				startQuestTimer("SEAL_CAST_ACTION", 1000, npc, null);
++			}
++		}
++	}
++	
++	public String onDespawn(Npc npc)
++	{
++		if (npc.getId() == ATRUS)
++		{
++			performCleanup();
++		}
++		return null;
++	}
++	
++	private void performCleanup()
++	{
++		GlobalVariablesManager.getInstance().set(ATRUS_VISUAL_VAR, false);
++		// Turns off visual (Broadcast)
++		setVisualActive(false);
++		despawnSeals();
++		despawnPowerSeals();
++		cancelQuestTimers("WATCH_VISUAL_STATUS");
++		cancelQuestTimers("START_SEAL_EVENT");
++		cancelQuestTimers("FINISH_SAFETY_RETURN");
++		cancelQuestTimers("EXECUTE_PULL_TO_CENTER");
++		cancelQuestTimers("START_ROTATION_MECHANIC");
++		cancelQuestTimers("AUTO_SKILL_LOOP");
++		cancelQuestTimers("WARN_OUTER_STORM");
++		cancelQuestTimers("WARN_INNER_STORM");
++		
++		_atrus = null;
++		_isMechanicActive = false;
++		_isReturning = false;
++		_combatStarted = false;
++		_phase1PermanentlyDisabled = false;
++		_outerStormWarmup = 0;
++		_innerStormWarmup = 0;
++		_nextStormAvailable = 0;
++	}
++	
++	private void setVisualActive(boolean active)
++	{
++		GlobalVariablesManager.getInstance().set(ATRUS_VISUAL_VAR, active);
++		
++		if (_visualZone == null)
++		{
++			return;
++		}
++		
++		ExChangeClientEffectInfo packet = new ExChangeClientEffectInfo(0, 0, active ? 2 : 0);
++		
++		for (Player player : _visualZone.getPlayersInside())
++		{
++			if ((player != null) && player.isOnline())
++			{
++				player.broadcastPacket(packet);
++			}
++		}
++	}
++	
++	@Override
++	public void onEnterZone(Creature character, ZoneType zone)
++	{
++		if (character.isPlayer())
++		{
++			if ((_visualZone != null) && (zone.getId() == _visualZone.getId()))
++			{
++				boolean isActive = GlobalVariablesManager.getInstance().getBoolean(ATRUS_VISUAL_VAR, false);
++				if (isActive)
++				{
++					character.sendPacket(new ExChangeClientEffectInfo(0, 0, 2));
++				}
++				else
++				{
++					character.sendPacket(new ExChangeClientEffectInfo(0, 0, 0));
++				}
++			}
++		}
++		super.onEnterZone(character, zone);
++	}
++	
++	@Override
++	public String onEvent(String event, Npc npc, Player player)
++	{
++		if (event.equals("WATCH_VISUAL_STATUS"))
++		{
++			if (_atrus != null)
++			{
++				if (!_atrus.isSpawned())
++				{
++					performCleanup();
++				}
++			}
++			else
++			{
++				cancelQuestTimers("WATCH_VISUAL_STATUS");
++			}
++			startQuestTimer("WATCH_VISUAL_STATUS", 1000, null, null);
++		}
++		else if (event.equals("CHECK_BOUNDARIES"))
++		{
++			if ((_atrus != null) && !_atrus.isDead() && _atrus.isSpawned() && !_isMechanicActive)
++			{
++				boolean outOfZone = (_combatZone != null) && !_combatZone.isInsideZone(_atrus);
++				boolean tooFar = _atrus.calculateDistance2D(SPAWN_LOC) > 1450;
++				
++				if (_isReturning)
++				{
++					if (tooFar && ((System.currentTimeMillis() - _lastReturnAttempt) > 3000))
++					{
++						startSafetyReturn();
++					}
++				}
++				else if (outOfZone || tooFar)
++				{
++					startSafetyReturn();
++				}
++			}
++			startQuestTimer("CHECK_BOUNDARIES", 1000, null, null);
++		}
++		else if (event.equals("AUTO_SKILL_LOOP"))
++		{
++			if ((_atrus != null) && !_atrus.isDead() && !_isReturning && _combatStarted)
++			{
++				if (_atrus.isAttackingNow())
++				{
++					_atrus.abortAttack();
++				}
++				
++				if (!_isMechanicActive && !_atrus.isCastingNow() && (_atrus.getAI().getIntention() != Intention.CAST))
++				{
++					manageSkills(_atrus);
++				}
++				
++				startQuestTimer("AUTO_SKILL_LOOP", 100, _atrus, null);
++			}
++		}
++		
++		// Atrus rotation at specific HP (90%, 70%, 60%)
++		else if (event.equals("START_ROTATION_MECHANIC"))
++		{
++			if ((_atrus != null) && !_atrus.isDead())
++			{
++				_isMechanicActive = true;
++				
++				if (_combatZone != null)
++				{
++					_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.DUE_TO_THE_CHAOTIC_SEAL_S_EFFECT_ATRUS_IS_UNLEASHING_THE_CHAOS_POWER, ExShowScreenMessage.TOP_CENTER, 7000, true));
++				}
++				
++				_atrus.getAI().setIntention(Intention.IDLE);
++				_atrus.abortAttack();
++				_atrus.abortCast();
++				_atrus.stopMove(null);
++				_atrus.setTarget(null);
++				
++				if (_atrus.isAttackable())
++				{
++					_atrus.asAttackable().getAggroList().clear();
++					_atrus.asAttackable().clearAggroList();
++				}
++				
++				_atrus.setTargetable(false);
++				_atrus.setInvul(true);
++				
++				if (_combatZone != null)
++				{
++					for (Player p : _combatZone.getPlayersInside())
++					{
++						if ((p != null) && (p.getTarget() == _atrus))
++						{
++							p.setTarget(null);
++							p.sendPacket(new TargetUnselected(_atrus));
++						}
++					}
++				}
++				
++				_atrus.doCast(KASHA_VISUAL_JUMP.getSkill());
++				long jumpTime = KASHA_VISUAL_JUMP.getSkill().getHitTime() + 500;
++				startQuestTimer("EXECUTE_PULL_TO_CENTER", jumpTime, _atrus, null);
++			}
++		}
++		else if (event.equals("EXECUTE_PULL_TO_CENTER"))
++		{
++			if ((_atrus != null) && !_atrus.isDead())
++			{
++				_atrus.broadcastPacket(new FlyToLocation(_atrus, SPAWN_LOC, FlyType.CHARGE));
++				_atrus.setXYZ(SPAWN_LOC.getX(), SPAWN_LOC.getY(), SPAWN_LOC.getZ());
++				_atrus.broadcastPacket(new ValidateLocation(_atrus));
++				
++				startQuestTimer("SPAWN_POWER_SEAL_1", 2000, _atrus, null);
++			}
++		}
++		
++		else if (event.equals("ATTACK_POWER_SEAL"))
++		{
++			if ((npc != null) && !npc.isDead() && (_atrus != null) && !_atrus.isDead())
++			{
++				_atrus.setTarget(npc);
++				_atrus.getAI().setIntention(Intention.CAST, KASHA_FRAY.getSkill(), npc);
++			}
++		}
++		
++		else if (event.equals("SPAWN_POWER_SEAL_1"))
++		{
++			spawnAndAttackPowerSeal(POWER_SEAL_LOC_1, "SPAWN_POWER_SEAL_2");
++		}
++		else if (event.equals("SPAWN_POWER_SEAL_2"))
++		{
++			spawnAndAttackPowerSeal(POWER_SEAL_LOC_2, "SPAWN_POWER_SEAL_3");
++		}
++		else if (event.equals("SPAWN_POWER_SEAL_3"))
++		{
++			spawnAndAttackPowerSeal(POWER_SEAL_LOC_3, "SPAWN_POWER_SEAL_4");
++		}
++		else if (event.equals("SPAWN_POWER_SEAL_4"))
++		{
++			spawnAndAttackPowerSeal(POWER_SEAL_LOC_4, "FINISH_ROTATION_MECHANIC");
++		}
++		
++		else if (event.equals("FINISH_ROTATION_MECHANIC"))
++		{
++			if (_atrus != null)
++			{
++				despawnPowerSeals();
++				_isMechanicActive = false;
++				_atrus.setInvul(false);
++				_atrus.setTargetable(true);
++				_atrus.getAI().setIntention(Intention.ACTIVE);
++			}
++		}
++		
++		else if (event.equals("FINISH_SAFETY_RETURN"))
++		{
++			if ((_atrus != null) && !_atrus.isDead())
++			{
++				_isReturning = false;
++				_atrus.setTargetable(true);
++				
++				if (_isMechanicActive)
++				{
++					_atrus.setInvul(true);
++					startQuestTimer("SPAWN_SEALS_NOW", 500, _atrus, null);
++				}
++				else
++				{
++					_atrus.setInvul(false);
++					_atrus.getAI().setIntention(Intention.ACTIVE);
++				}
++			}
++		}
++		
++		else if (event.equals("START_SEAL_EVENT"))
++		{
++			startSealEvent();
++		}
++		else if (event.equals("SPAWN_SEALS_NOW"))
++		{
++			if (_atrus != null)
++			{
++				_atrus.setInvul(true);
++				_atrus.setImmobilized(true);
++				spawnSeals();
++			}
++		}
++		
++		else if (event.equals("SEAL_CAST_ACTION"))
++		{
++			if (npc != null)
++			{
++				if (_atrus != null)
++				{
++					npc.setTarget(_atrus);
++					npc.doCast(CHAOS_CURE.getSkill());
++					startQuestTimer("SEAL_CAST_ACTION", 1500, npc, null);
++				}
++				else
++				{
++					npc.deleteMe();
++				}
++			}
++		}
++		
++		else if (event.equals("CHECK_EVENT_RESULT"))
++		{
++			finishSealEvent(false);
++		}
++		
++		return super.onEvent(event, npc, player);
++	}
++	
++	private void manageSkills(Npc npc)
++	{
++		if ((npc == null) || npc.isDead() || _isReturning || _isMechanicActive)
++		{
++			return;
++		}
++		if (npc.isCastingNow())
++		{
++			return;
++		}
++		if (!npc.isAttackable())
++		{
++			return;
++		}
++		
++		if (_phase1PermanentlyDisabled || (npc.getCurrentHpPercent() <= 50))
++		{
++			managePhase2Routine(npc);
++			return;
++		}
++		
++		if ((npc.getCurrentHpPercent() > 50) && !_phase1PermanentlyDisabled)
++		{
++			managePhase1Routine(npc);
++			return;
++		}
++	}
++	
++	private void managePhase2Routine(Npc npc)
++	{
++		Attackable monster = npc.asAttackable();
++		Creature target = getValidTarget(monster);
++		
++		if (target == null)
++		{
++			npc.getAI().setIntention(Intention.ACTIVE);
++			return;
++		}
++		
++		npc.setTarget(target);
++		double dist = npc.calculateDistance3D(target);
++		long now = System.currentTimeMillis();
++		
++		boolean canLaunchStorm = now > _nextStormAvailable;
++		boolean isWarmingUp = (_outerStormWarmup > 0) || (_innerStormWarmup > 0);
++		
++		if (canLaunchStorm || isWarmingUp)
++		{
++			if ((_outerStormWarmup == 0) && (_innerStormWarmup == 0) && canLaunchStorm && SkillCaster.checkUseConditions(npc, KASHA_OUTER_STORM.getSkill()))
++			{
++				if (_combatZone != null)
++				{
++					_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.ATRUS_IS_EMANATING_THE_CHAOS_POWER, ExShowScreenMessage.TOP_CENTER, 5000, true));
++				}
++				_outerStormWarmup = now + 5000;
++				_nextStormAvailable = now + 20000;
++			}
++			else if ((_outerStormWarmup > 0) && (now >= _outerStormWarmup))
++			{
++				npc.doCast(KASHA_OUTER_STORM.getSkill());
++				_outerStormWarmup = 0;
++				return;
++			}
++			else if ((_innerStormWarmup == 0) && (_outerStormWarmup == 0) && canLaunchStorm && (dist < 600) && SkillCaster.checkUseConditions(npc, KASHA_INNER_STORM.getSkill()))
++			{
++				if (_combatZone != null)
++				{
++					_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.THE_CHAOS_POWER_IS_GATHERING_AROUND_ATRUS, ExShowScreenMessage.TOP_CENTER, 5000, true));
++				}
++				_innerStormWarmup = now + 5000;
++				_nextStormAvailable = now + 20000;
++			}
++			else if ((_innerStormWarmup > 0) && (now >= _innerStormWarmup))
++			{
++				npc.doCast(KASHA_INNER_STORM.getSkill());
++				_innerStormWarmup = 0;
++				return;
++			}
++		}
++		
++		if (SkillCaster.checkUseConditions(npc, KASHA_DESTRUCTION.getSkill()))
++		{
++			npc.doCast(KASHA_DESTRUCTION.getSkill());
++			return;
++		}
++	}
++	
++	private void managePhase1Routine(Npc npc)
++	{
++		Attackable monster = npc.asAttackable();
++		Creature target = getValidTarget(monster);
++		
++		if (target == null)
++		{
++			npc.getAI().setIntention(Intention.ACTIVE);
++			return;
++		}
++		
++		npc.setTarget(target);
++		SkillHolder skillToCast = null;
++		
++		switch (_comboStep)
++		{
++			case 0:
++				skillToCast = KASHA_WAVE;
++				break;
++			case 1:
++				skillToCast = KASHA_WAVE;
++				break;
++			case 2:
++				skillToCast = KASHA_PULL;
++				break;
++			case 3:
++				skillToCast = KASHA_SWEEP;
++				break;
++			case 4:
++				skillToCast = KASHA_BASIC_ATTACK;
++				break;
++			case 5:
++				skillToCast = KASHA_BASIC_ATTACK;
++				break;
++			case 6:
++				skillToCast = KASHA_BASIC_ATTACK;
++				break;
++			default:
++				skillToCast = KASHA_WAVE;
++				_comboStep = 0;
++				break;
++		}
++		
++		if ((skillToCast != null) && SkillCaster.checkUseConditions(npc, skillToCast.getSkill()))
++		{
++			npc.doCast(skillToCast.getSkill());
++			_comboStep++;
++			if (_comboStep > 6)
++			{
++				_comboStep = 0;
++			}
++		}
++	}
++	
++	private Creature getValidTarget(Attackable monster)
++	{
++		Creature target = null;
++		if (Rnd.get(100) < 30)
++		{
++			List<Player> validPlayers = new ArrayList<>();
++			if (_combatZone != null)
++			{
++				for (Player p : _combatZone.getPlayersInside())
++				{
++					if ((p != null) && !p.isDead() && !p.isInvul() && p.isSpawned())
++					{
++						validPlayers.add(p);
++					}
++				}
++			}
++			if (!validPlayers.isEmpty())
++			{
++				target = validPlayers.get(Rnd.get(validPlayers.size()));
++			}
++		}
++		
++		if (target == null)
++		{
++			target = monster.getMostHated();
++		}
++		
++		if ((target != null) && target.isSummon())
++		{
++			Player owner = target.asSummon().getOwner();
++			if ((owner != null) && (_combatZone != null) && _combatZone.isInsideZone(owner))
++			{
++				target = owner;
++			}
++		}
++		
++		if ((target != null) && (target.isDead() || ((_combatZone != null) && !_combatZone.isInsideZone(target))))
++		{
++			monster.getAggroList().remove(target);
++			return null;
++		}
++		return target;
++	}
++	
++	private void spawnAndAttackPowerSeal(Location loc, String nextEvent)
++	{
++		if ((_atrus == null) || _atrus.isDead())
++		{
++			return;
++		}
++		
++		Npc seal = addSpawn(POWER_SEAL, loc, false, 0);
++		_powerSeals.add(seal);
++		
++		_atrus.getAI().setIntention(Intention.IDLE);
++		_atrus.abortAttack();
++		_atrus.abortCast();
++		_atrus.stopMove(null);
++		
++		int heading = _atrus.calculateHeadingTo(seal);
++		_atrus.setHeading(heading);
++		_atrus.broadcastPacket(new org.l2jmobius.gameserver.network.serverpackets.StopMove(_atrus));
++		_atrus.broadcastPacket(new ValidateLocation(_atrus));
++		
++		Location jumpLoc = new Location(SPAWN_LOC.getX(), SPAWN_LOC.getY(), SPAWN_LOC.getZ() + 5);
++		_atrus.broadcastPacket(new FlyToLocation(_atrus, jumpLoc, FlyType.CHARGE));
++		
++		_atrus.setTarget(seal);
++		startQuestTimer("ATTACK_POWER_SEAL", 800, seal, null);
++		startQuestTimer(nextEvent, 4000, _atrus, null);
++	}
++	
++	@Override
++	public void onAttack(Npc npc, Player attacker, int damage, boolean isSummon, Skill skill)
++	{
++		if (npc.getId() == ATRUS)
++		{
++			if (!_combatStarted)
++			{
++				_combatStarted = true;
++				startQuestTimer("AUTO_SKILL_LOOP", 1000, npc, null);
++			}
++			
++			if (_isReturning)
++			{
++				npc.abortAttack();
++				npc.abortCast();
++				npc.setTarget(null);
++				return;
++			}
++			
++			if ((attacker != null) && (_combatZone != null) && !_combatZone.isInsideZone(attacker))
++			{
++				attacker.teleToLocation(SPAWN_LOC);
++				if (npc.isAttackable())
++				{
++					npc.asAttackable().getAggroList().remove(attacker);
++				}
++				npc.abortAttack();
++				npc.stopMove(null);
++				return;
++			}
++			
++			if (_isMechanicActive)
++			{
++				return;
++			}
++			
++			double hpPercent = npc.getCurrentHpPercent();
++			
++			if ((hpPercent <= 50) && !_phase1PermanentlyDisabled)
++			{
++				_phase1PermanentlyDisabled = true;
++				
++				if (!_hp50Triggered)
++				{
++					_hp50Triggered = true;
++					
++					npc.setRHandId(WEAPON_POLEARM_ID);
++					
++					if (_combatZone != null)
++					{
++						_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.ATRUS_IS_CHANGING_HIS_WEAPON_AND_ATTACK_STYLE, ExShowScreenMessage.TOP_CENTER, 7000, true));
++					}
++				}
++			}
++			
++			// Trigger 90%
++			if ((hpPercent <= 90) && (hpPercent > 68) && !_hp90Triggered)
++			{
++				_hp90Triggered = true;
++				startQuestTimer("START_ROTATION_MECHANIC", 100, npc, null);
++				return;
++			}
++			
++			// Trigger 70%
++			if ((hpPercent <= 70) && (hpPercent > 62) && !_hp70Triggered)
++			{
++				_hp70Triggered = true;
++				startQuestTimer("START_ROTATION_MECHANIC", 100, npc, null);
++				return;
++			}
++			
++			// Trigger 60%
++			if ((hpPercent <= 60) && (hpPercent > 53) && !_hp60Triggered)
++			{
++				_hp60Triggered = true;
++				startQuestTimer("START_ROTATION_MECHANIC", 100, npc, null);
++				return;
++			}
++			
++			// Trigger 40%
++			if ((hpPercent <= 40) && !_hp40Triggered)
++			{
++				_hp40Triggered = true;
++				startSealEvent();
++				return;
++			}
++		}
++	}
++	
++	private void startSafetyReturn()
++	{
++		_lastReturnAttempt = System.currentTimeMillis();
++		_isReturning = true;
++		_combatStarted = false;
++		
++		if (_atrus.isAttackable())
++		{
++			_atrus.asAttackable().getAggroList().clear();
++			_atrus.asAttackable().clearAggroList();
++		}
++		
++		_atrus.getAI().setIntention(Intention.IDLE);
++		_atrus.abortAttack();
++		_atrus.abortCast();
++		_atrus.stopMove(null);
++		_atrus.setTarget(null);
++		
++		_atrus.setTargetable(false);
++		_atrus.setInvul(true);
++		
++		if (_combatZone != null)
++		{
++			for (Player p : _combatZone.getPlayersInside())
++			{
++				if ((p != null) && (p.getTarget() == _atrus))
++				{
++					p.setTarget(null);
++					p.sendPacket(new TargetUnselected(_atrus));
++				}
++			}
++		}
++		
++		_atrus.broadcastPacket(new FlyToLocation(_atrus, SPAWN_LOC, FlyType.CHARGE));
++		_atrus.setXYZ(SPAWN_LOC.getX(), SPAWN_LOC.getY(), SPAWN_LOC.getZ());
++		_atrus.broadcastPacket(new ValidateLocation(_atrus));
++		
++		startQuestTimer("FINISH_SAFETY_RETURN", 2000, _atrus, null);
++	}
++	
++	private void startSealEvent()
++	{
++		if ((_atrus == null) || _atrus.isDead())
++		{
++			return;
++		}
++		_isMechanicActive = true;
++		
++		if (_combatZone != null)
++		{
++			_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.ATRUS_IS_ABSORBING_THE_CHAOS_POWER_HE_SUMMONS_THE_CHAOTIC_SEAL_THAT_PROTECTS_HIM, ExShowScreenMessage.TOP_CENTER, 7000, true));
++		}
++		
++		if (_atrus.calculateDistance2D(SPAWN_LOC) > 200)
++		{
++			_isReturning = true;
++			startSafetyReturn();
++		}
++		else
++		{
++			startQuestTimer("SPAWN_SEALS_NOW", 100, _atrus, null);
++		}
++	}
++	
++	private void spawnSeals()
++	{
++		_isReturning = false;
++		if (!_activeSeals.isEmpty())
++		{
++			despawnSeals();
++		}
++		
++		_activeSeals.add(addSpawn(CHAOS_SEAL, SEAL_LOC_1, false, 0));
++		_activeSeals.add(addSpawn(CHAOS_SEAL, SEAL_LOC_2, false, 0));
++		
++		startQuestTimer("CHECK_EVENT_RESULT", 10000, _atrus, null);
++	}
++	
++	private void finishSealEvent(boolean success)
++	{
++		cancelQuestTimer("CHECK_EVENT_RESULT", _atrus, null);
++		
++		if (_combatZone != null)
++		{
++			if (success)
++			{
++				_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.YOU_HAVE_DESTROYED_THE_SEAL_AND_STOPPED_ATRUS_FROM_ABSORBING_THE_CHAOS_POWER, ExShowScreenMessage.TOP_CENTER, 5000, true));
++			}
++			else
++			{
++				_combatZone.broadcastPacket(new ExShowScreenMessage(NpcStringId.YOU_HAVE_FAILED_TO_DESTROY_THE_CHAOTIC_SEAL_AND_IT_HAS_RECOVERED_ATRUS_HEALTH, ExShowScreenMessage.TOP_CENTER, 5000, true));
++			}
++		}
++		
++		if (!success)
++		{
++			if (_combatZone != null)
++			{
++				for (Creature c : _combatZone.getCharactersInside())
++				{
++					if ((c != null) && !c.isDead() && (c.isPlayer() || c.isSummon()))
++					{
++						c.doDie(_atrus);
++					}
++				}
++			}
++			
++			if ((_atrus != null) && !_atrus.isDead())
++			{
++				double currentHp = _atrus.getCurrentHp();
++				double maxHp = _atrus.getMaxHp();
++				if (((currentHp / maxHp) * 100) <= 5)
++				{
++					_atrus.setCurrentHp(maxHp * 0.20);
++				}
++				else
++				{
++					_atrus.setCurrentHp(Math.min(maxHp, currentHp + (maxHp * 0.05)));
++				}
++			}
++		}
++		
++		despawnSeals();
++		
++		if (_atrus != null)
++		{
++			_atrus.setInvul(false);
++			_atrus.setImmobilized(false);
++			_isMechanicActive = false;
++			startQuestTimer("START_SEAL_EVENT", 120000, _atrus, null);
++		}
++	}
++	
++	private void despawnSeals()
++	{
++		for (Npc seal : _activeSeals)
++		{
++			if (seal != null)
++			{
++				cancelQuestTimer("SEAL_CAST_ACTION", seal, null);
++				seal.deleteMe();
++			}
++		}
++		_activeSeals.clear();
++	}
++	
++	private void despawnPowerSeals()
++	{
++		for (Npc seal : _powerSeals)
++		{
++			if (seal != null)
++			{
++				seal.deleteMe();
++			}
++		}
++		_powerSeals.clear();
++	}
++	
++	@Override
++	public void onKill(Npc npc, Player killer, boolean isSummon)
++	{
++		if (npc.getId() == ATRUS)
++		{
++			performCleanup();
++		}
++		else if (npc.getId() == CHAOS_SEAL)
++		{
++			_activeSeals.remove(npc);
++			if (_activeSeals.isEmpty() && _isMechanicActive)
++			{
++				finishSealEvent(true);
++			}
++		}
++	}
++	
++	public static void main(String[] args)
++	{
++		new AtrusBoss();
++	}
++}
+\ No newline at end of file
+diff --git dist/game/data/spawns/Orc/KashaOrcFortress.xml dist/game/data/spawns/Orc/KashaOrcFortress.xml
+index b5b96e4809c..6fc4e56265e 100644
+--- dist/game/data/spawns/Orc/KashaOrcFortress.xml
++++ dist/game/data/spawns/Orc/KashaOrcFortress.xml
+@@ -3,7 +3,7 @@
+ 	<spawn name="KashaOrcFortress">
+ 		<group name="Npc">
+ 			<npc id="31637" x="-14923" y="-114718" z="-4033" heading="26634" respawnTime="60sec" /> <!-- Khavatari Kashu -->
+-			<npc id="30590" x="-22807" y="-110868" z="-3376" heading="30971" respawnTime="60sec" /> <!-- Rosheek - Khavatari -->
++			<npc id="30590" x="-23761" y="-110766" z="-3335" heading="55840" respawnTime="60sec" /> <!-- Rosheek - Khavatari -->
+ 		</group>
+ 	</spawn>
+ </list>
+\ No newline at end of file
+diff --git dist/game/data/stats/npcs/29400-29499.xml dist/game/data/stats/npcs/29400-29499.xml
+index b98a221af4b..9b63020eecb 100644
+--- dist/game/data/stats/npcs/29400-29499.xml
++++ dist/game/data/stats/npcs/29400-29499.xml
+@@ -1814,7 +1814,6 @@
+ 		</skillList>
+ 	</npc>
+ 	<npc id="29433" level="130" type="RaidBoss" name="Atrus" title="Kasha's Avatar">
+-		<!-- AUTO GENERATED NPC TODO: FIX IT -->
+ 		<race>HUMANOID</race>
+ 		<sex>MALE</sex>
+ 		<equipment rhand="83343" /> <!-- Kasha Orc Boss' Elite Avenger - For NPC. -->
+@@ -1834,6 +1833,7 @@
+ 			</attribute>
+ 		</stats>
+ 		<status attackable="true" />
++		<ai type="MAGE" isAggressive="false" />
+ 		<collision>
+ 			<radius normal="54" />
+ 			<height normal="147" />
+@@ -1851,12 +1851,11 @@
+ 		</skillList>
+ 	</npc>
+ 	<npc id="29434" level="130" type="Monster" name="Chaotic Seal">
+-		<!-- AUTO GENERATED NPC TODO: FIX IT -->
+ 		<race>ETC</race>
+ 		<sex>MALE</sex>
+ 		<stats str="88" int="79" dex="55" wit="78" con="82" men="78">
+ 			<vitals hp="88639227" hpRegen="13.4" mp="3190" mpRegen="30" />
+-			<attack physical="319843" magical="291506" random="10" critical="4" accuracy="5" attackSpeed="253" type="SWORD" range="40" distance="80" width="120" />
++			<attack physical="319843" magical="291506" random="10" critical="4" accuracy="5" attackSpeed="253" type="SWORD" range="600" distance="600" width="120" />
+ 			<defence physical="150648" magical="729046" />
+ 			<speed>
+ 				<walk ground="1" />
+@@ -1868,7 +1867,8 @@
+ 				<defence fire="2650" water="2650" wind="2650" earth="2650" holy="2650" dark="2600" />
+ 			</attribute>
+ 		</stats>
+-		<status attackable="true" />
++		<status attackable="true" canMove="false" />
++		<ai isAggressive="false" />
+ 		<collision>
+ 			<radius normal="36" />
+ 			<height normal="126" />
+@@ -1886,7 +1886,6 @@
+ 		</skillList>
+ 	</npc>
+ 	<npc id="29435" level="130" type="Monster" name="Chaotic Seal">
+-		<!-- AUTO GENERATED NPC TODO: FIX IT -->
+ 		<race>ETC</race>
+ 		<sex>MALE</sex>
+ 		<stats str="88" int="79" dex="55" wit="78" con="82" men="78">
+@@ -1903,7 +1902,8 @@
+ 				<defence fire="2650" water="2650" wind="2650" earth="2650" holy="2600" dark="2650" />
+ 			</attribute>
+ 		</stats>
+-		<status attackable="true" />
++		<status attackable="true" canMove="false" />
++		<ai isAggressive="false" />
+ 		<collision>
+ 			<radius normal="36" />
+ 			<height normal="126" />
+diff --git dist/game/data/stats/skills/62200-62299.xml dist/game/data/stats/skills/62200-62299.xml
+index d62a61a0f31..f7043994d26 100644
+--- dist/game/data/stats/skills/62200-62299.xml
++++ dist/game/data/stats/skills/62200-62299.xml
+@@ -245,93 +245,367 @@
+ 	<skill id="62224" toLevel="1" name="Kasha's Avatar Atrus">
+ 		<!-- Once of the High Orcs, Atrus lost his way tempted by the Chaos Power. Now he knows only one master - Kasha. <Bonus stats>. Max received damage is fixed at 2,000,000. Received damage from basic attacks -30%, Accuracy/ Evasion +200. <Spawn requirements>. Spawns in Kasha Orc Fortress at 21:00 every Wednesday and Saturday, and disappears in 20 min. <Reward requirements>. The defeat contribution reward is only given to 200 top-damage characters. The damage dealt by a character has to be at least 0.1% of the boss' Max HP. The first/ last hit reward is given to characters who have fulfilled the requirements for the defeat contribution reward as well as have delivered the first/ last blow. The top-damage reward is given to characters who have fulfilled the requirements for the defeat contribution reward as well as have achieved the 1st-10th rank in the damage rank list. -->
+ 		<icon>icon.skillraid</icon>
+-		<operateType>A2</operateType>
++		<operateType>P</operateType>
++		<effects>
++		<effect name="GetDamageLimit">
++			<amount>2000000</amount>
++		</effect>
++		<effect name="DamageByAttack">
++				<amount>-30</amount>
++				<type>ENEMY_ALL</type>
++		</effect>
++		<effect name="Accuracy">
++				<amount>200</amount>
++				<mode>DIFF</mode>
++		</effect>
++	</effects>
+ 	</skill>
+ 	<skill id="62225" toLevel="1" name="Kasha's Destruction (Blunt Weapon)">
+ 		<operateType>A1</operateType>
+-		<castRange>1000</castRange>
++		<targetType>ENEMY</targetType>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectScope>SQUARE</affectScope>
++		<castRange>350</castRange>
+ 		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
++		<effectRange>350</effectRange>
++		<fanRange>0;0;350;300</fanRange>
+ 		<hitTime>1500</hitTime>
+-		<isMagic>6</isMagic>
++		<reuseDelay>1000</reuseDelay>
++		<effects>
++		<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.20</pAtkMod>
++				<pDefMod>0.006</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62226" toLevel="1" name="Kasha's Wave (Blunt Weapon)">
+ 		<!-- Deals P. damage stunning enemies for 2 sec. The damage is increased based on the number of affected targets. Cannot be removed. -->
+ 		<icon>icon.skill33916</icon>
+-		<operateType>A1</operateType>
+-		<castRange>2000</castRange>
++		<operateType>DA2</operateType>
++		<targetType>TARGET</targetType>
++		<abnormalLevel>4</abnormalLevel>
++		<abnormalTime>2</abnormalTime>
++		<abnormalType>STUN</abnormalType>
++		<abnormalVisualEffect>STUN</abnormalVisualEffect>
++		<activateRate>100</activateRate>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectRange>600</affectRange>
++		<affectScope>RANGE</affectScope>
++		<basicProperty>PHYSICAL</basicProperty>
++		<castRange>1600</castRange>
+ 		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
++		<effectRange>1000</effectRange>
+ 		<hitTime>4000</hitTime>
+ 		<isDebuff>true</isDebuff>
++		<lvlBonusRate>20</lvlBonusRate>
++		<magicCriticalRate>5</magicCriticalRate>
++		<magicLevel>130</magicLevel>
++		<reuseDelay>3000</reuseDelay>
+ 		<isMagic>6</isMagic>
++		<trait>SHOCK</trait>
++		<effects>
++		<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.25</pAtkMod>
++				<pDefMod>0.005</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++			<effect name="DefenceTrait">
++				<HOLD>100</HOLD>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<AIRBIND>100</AIRBIND>
++				<SLEEP>100</SLEEP>
++				<KNOCKBACK>100</KNOCKBACK>
++				<CHANGEBODY>100</CHANGEBODY>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62227" toLevel="1" name="Kasha's Pull (Blunt Weapon)">
+ 		<!-- Pulls nearby enemies and stuns them for 1 sec. Cannot be removed. -->
+ 		<icon>icon.skill32715</icon>
+-		<operateType>A1</operateType>
+-		<coolTime>500</coolTime>
++		<operateType>A2</operateType>
++		<targetType>SELF</targetType>
++		<abnormalLevel>1</abnormalLevel>
++		<abnormalResists>TURN_FLEE;KNOCKDOWN;DEPORT;SILENCE;PARALYZE;ABSORB;DISARM;SILENCE_PHYSICAL;SILENCE_ALL;CHANGEBODY;TURN_STONE;DERANGEMENT;AIRBIND;SLEEP;OBLIVION;MIRAGE;MIRAGE_TRAP;ROOT_MAGICALLY;ROOT_PHYSICALLY;STUN;PUBLIC_SLOT</abnormalResists>
++		<abnormalTime>1</abnormalTime>
++		<abnormalType>STUN</abnormalType>
++		<abnormalVisualEffect>STUN</abnormalVisualEffect>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectRange>1200</affectRange>
++		<affectScope>POINT_BLANK</affectScope>
+ 		<effectPoint>-100</effectPoint>
+-		<hitTime>1000</hitTime>
++		<hitTime>2500</hitTime>
++		<activateRate>150</activateRate>
++		<basicProperty>PHYSICAL</basicProperty>
++		<castRange>2000</castRange>
+ 		<isDebuff>true</isDebuff>
++		<lvlBonusRate>200</lvlBonusRate>
+ 		<isMagic>6</isMagic>
++		<reuseDelay>5000</reuseDelay>
++		<trait>PULL</trait>
++		<effects>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++			<effect name="PullBack">
++				<speed>600</speed>
++				<delay>600</delay>
++				<perfectionRate>150</perfectionRate>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62228" toLevel="1" name="Kasha's Sweep (Blunt Weapon)">
+ 		<!-- Deals P. damage knocking enemies down for 4 sec. The damage is increased based on the number of affected targets. Cannot be removed. -->
+ 		<icon>icon.skill1184</icon>
+-		<operateType>A1</operateType>
++		<operateType>A2</operateType>
++		<targetType>SELF</targetType>
++		<abnormalLevel>4</abnormalLevel>
++		<abnormalResists>TURN_FLEE;KNOCKDOWN;DEPORT;SILENCE;PARALYZE;ABSORB;DISARM;SILENCE_PHYSICAL;SILENCE_ALL;CHANGEBODY;TURN_STONE;DERANGEMENT;AIRBIND;SLEEP;OBLIVION;MIRAGE;MIRAGE_TRAP;ROOT_MAGICALLY;ROOT_PHYSICALLY;STUN;PUBLIC_SLOT</abnormalResists>
++		<abnormalTime>4</abnormalTime>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectRange>300</affectRange>
++		<affectScope>POINT_BLANK</affectScope>
++		<basicProperty>NONE</basicProperty>
++		<castRange>300</castRange>
+ 		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
+ 		<hitTime>2500</hitTime>
+ 		<isDebuff>true</isDebuff>
+-		<isMagic>6</isMagic>
++		<reuseDelay>7000</reuseDelay>
++		<trait>KNOCKDOWN</trait>
++		<effects>
++		<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.20</pAtkMod>
++				<pDefMod>0.005</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++			<effect name="DefenceTrait">
++				<AIRBIND>100</AIRBIND>
++				<KNOCKBACK>100</KNOCKBACK>
++				<SLEEP>100</SLEEP>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<HOLD>100</HOLD>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62229" toLevel="1" name="Kasha's Direct Attack (Blunt Weapon)">
+-		<operateType>A1</operateType>
+-		<castRange>5000</castRange>
++		<operateType>DA2</operateType>
++		<targetType>ENEMY</targetType>
++		<abnormalLevel>4</abnormalLevel>
++		<abnormalTime>3</abnormalTime>
++		<abnormalType>STUN</abnormalType>
++		<abnormalVisualEffect>STUN</abnormalVisualEffect>
++		<activateRate>70</activateRate>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectRange>600</affectRange>
++		<affectScope>RANGE</affectScope>
++		<basicProperty>PHYSICAL</basicProperty>
++		<castRange>1600</castRange>
+ 		<coolTime>500</coolTime>
+-		<hitTime>500</hitTime>
++		<effectPoint>-100</effectPoint>
++		<effectRange>1000</effectRange>
++		<hitCancelTime>1</hitCancelTime>
++		<hitTime>1500</hitTime>
++		<isDebuff>true</isDebuff>
++		<lvlBonusRate>20</lvlBonusRate>
++		<magicCriticalRate>5</magicCriticalRate>
++		<magicLevel>130</magicLevel>
++		<reuseDelay>7000</reuseDelay>
++		<!-- <nextAction>ATTACK</nextAction> -->
++		<isMagic>6</isMagic>
++		<trait>SHOCK</trait>
++		<effects>
++		<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.25</pAtkMod>
++				<pDefMod>0.005</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++			<effect name="DefenceTrait">
++				<HOLD>100</HOLD>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<AIRBIND>100</AIRBIND>
++				<SLEEP>100</SLEEP>
++				<KNOCKBACK>100</KNOCKBACK>
++				<CHANGEBODY>100</CHANGEBODY>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62230" toLevel="1" name="Kasha's Fray (Blunt Weapon)">
+ 		<operateType>A1</operateType>
++		<targetType>TARGET</targetType>
++		<abnormalLevel>1</abnormalLevel>
++		<abnormalTime>3</abnormalTime>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<affectObject>ALL</affectObject>
++		<activateRate>100</activateRate>
++		<affectRange>1000</affectRange>
++		<affectScope>SQUARE</affectScope>
++		<basicProperty>PHYSICAL</basicProperty>
++		<castRange>1600</castRange>
+ 		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
++		<effectRange>1500</effectRange>
++		<fanRange>0;0;1500;1500</fanRange>
+ 		<hitTime>2000</hitTime>
+-		<isMagic>6</isMagic>
++		<isDebuff>true</isDebuff>
++		<reuseDelay>700</reuseDelay>
++		<trait>KNOCKDOWN</trait>
++		<effects>
++		<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.52</pAtkMod>
++				<pDefMod>0.003</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++			<effect name="DefenceTrait">
++				<HOLD>100</HOLD>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<AIRBIND>100</AIRBIND>
++				<SLEEP>100</SLEEP>
++				<KNOCKBACK>100</KNOCKBACK>
++				<CHANGEBODY>100</CHANGEBODY>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62231" toLevel="1" name="Kasha's Destruction (Stormer)">
+ 		<operateType>A1</operateType>
++		<targetType>ENEMY</targetType>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectRange>100</affectRange>
++		<affectScope>RANGE</affectScope>
++		<basicProperty>PHYSICAL</basicProperty> 
+ 		<castRange>2000</castRange>
+-		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
++		<coolTime>500</coolTime>
+ 		<hitTime>1500</hitTime>
+-		<isMagic>6</isMagic>
++		<reuseDelay>5</reuseDelay>
++		<lvlBonusRate>1</lvlBonusRate>
++		<effects>
++			<effect name="PhysicalDamage">
++        <power>100</power>
++        <pAtkMod>0.92</pAtkMod>
++        <pDefMod>0.01</pDefMod>
++        <ignoreShieldDefence>true</ignoreShieldDefence>
++        <overHit>true</overHit>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62232" toLevel="1" name="Kasha's Inner Storm (Stormer)">
+ 		<!-- Deals P. damage knocking enemies down for 4 sec. The damage is increased based on the number of affected targets. Cannot be removed. -->
+ 		<icon>icon.skill32100</icon>
+-		<operateType>A1</operateType>
++		<operateType>A2</operateType>
++		<targetType>SELF</targetType>
++		<abnormalLevel>4</abnormalLevel>
++		<abnormalResists>TURN_FLEE;KNOCKDOWN;DEPORT;SILENCE;PARALYZE;ABSORB;DISARM;SILENCE_PHYSICAL;SILENCE_ALL;CHANGEBODY;TURN_STONE;DERANGEMENT;AIRBIND;SLEEP;OBLIVION;MIRAGE;MIRAGE_TRAP;ROOT_MAGICALLY;ROOT_PHYSICALLY;STUN;PUBLIC_SLOT</abnormalResists>
++		<abnormalTime>4</abnormalTime>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<affectObject>NOT_FRIEND</affectObject>
++		<affectRange>500</affectRange>
++		<affectScope>POINT_BLANK</affectScope>
++		<basicProperty>NONE</basicProperty>
++		<castRange>500</castRange>
+ 		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
+ 		<hitTime>2000</hitTime>
+ 		<isDebuff>true</isDebuff>
++		<magicCriticalRate>-5</magicCriticalRate>
++		<magicLevel>130</magicLevel>
+ 		<isMagic>6</isMagic>
++		<reuseDelay>15000</reuseDelay>
++		<trait>KNOCKDOWN</trait>
++		<effects>
++		<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.22</pAtkMod>
++				<pDefMod>0.005</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62233" toLevel="1" name="Kasha's Outer Storm (Stormer)">
+ 		<!-- Deals P. damage knocking enemies down for 4 sec. The damage is increased based on the number of affected targets. Cannot be removed. -->
+ 		<icon>icon.skill32100</icon>
+-		<operateType>A1</operateType>
++		<operateType>A2</operateType>
++		<targetType>SELF</targetType>
++		<abnormalLevel>4</abnormalLevel>
++		<abnormalResists>TURN_FLEE;KNOCKDOWN;DEPORT;SILENCE;PARALYZE;ABSORB;DISARM;SILENCE_PHYSICAL;SILENCE_ALL;CHANGEBODY;TURN_STONE;DERANGEMENT;AIRBIND;SLEEP;OBLIVION;MIRAGE;MIRAGE_TRAP;ROOT_MAGICALLY;ROOT_PHYSICALLY;STUN;PUBLIC_SLOT</abnormalResists>
++		<abnormalTime>4</abnormalTime>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<affectScope>RING_RANGE</affectScope>
++		<fanRange>0;0;200;0</fanRange>
++		<affectRange>2000</affectRange>
++		<affectObject>NOT_FRIEND</affectObject>
++		<basicProperty>NONE</basicProperty>
++		<castRange>300</castRange>
+ 		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
+-		<hitTime>2000</hitTime>
++		<hitTime>2500</hitTime>
+ 		<isDebuff>true</isDebuff>
++		<magicCriticalRate>-5</magicCriticalRate>
++		<magicLevel>130</magicLevel>
+ 		<isMagic>6</isMagic>
++		<reuseDelay>26000</reuseDelay>
++		<trait>KNOCKDOWN</trait>
++		<effects>
++			<effect name="PhysicalDamage">
++				<power>100</power>
++				<pAtkMod>0.296</pAtkMod>
++				<pDefMod>0.01</pDefMod>
++				<overHit>true</overHit>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="62234" toLevel="1" name="Chaos Cure">
+-		<operateType>A1</operateType>
+-		<castRange>5000</castRange>
++	<!-- effect visual to script -->
++		<operateType>CA1</operateType>
++		<targetType>TARGET</targetType>
++		<affectRange>3000</affectRange>
++		<affectScope>SINGLE</affectScope>
++		<castRange>3000</castRange>
++		<channelingStart>1.2</channelingStart>
++		<channelingTickInterval>1</channelingTickInterval>
++		<effectPoint>-714</effectPoint>
++		<effectRange>3000</effectRange> 
++		<coolTime>500</coolTime>
+ 		<hitTime>10000</hitTime>
+-		<isMagic>6</isMagic>
++		<isDebuff>true</isDebuff>
++		<isMagic>1</isMagic>
++		<magicCriticalRate>1</magicCriticalRate>
++		<magicLevel>127</magicLevel>
++		<reuseDelay>100</reuseDelay>
+ 	</skill>
+ 	<skill id="62235" toLevel="1" name="Chaos Stone Call">
+ 		<operateType>A1</operateType>
+@@ -543,7 +817,12 @@
+ 	<skill id="62241" toLevel="1" name="Chaotic Seal">
+ 		<!-- A crystal imbued with the Chaos Power. Recovers Atrus' HP. If all crystals are destroyed and Atrus cannot recover HP, the converted Chaos Power is transferred to those around him. <Bonus stats>. Max received damage is fixed at 2,000,000. -->
+ 		<icon>icon.skillraid</icon>
+-		<operateType>A2</operateType>
++		<operateType>P</operateType>
++		<effects>
++		<effect name="GetDamageLimit">
++			<amount>2000000</amount>
++		</effect>
++	</effects>
+ 	</skill>
+ 	<skill id="62242" toLevel="1" name="Freya's Breath">
+ 		<!-- Freya's Garden is filled with the Queen's icy breath and power. Skill cooldown -99%. Note!. The effect is only active in Freya's Garden. -->
+diff --git dist/game/data/zones/custom_script.xml dist/game/data/zones/custom_script.xml
+index 6be6765c4db..914c0ecff18 100644
+--- dist/game/data/zones/custom_script.xml
++++ dist/game/data/zones/custom_script.xml
+@@ -1405,4 +1405,82 @@
+ 		<node X="59875" Y="-45623" />
+ 		<node X="59551" Y="-45734" />
+ 	</zone>
++		<zone name="AtrusZoneKashaOrcFortress" type="ScriptZone" shape="NPoly" minZ="-3938" maxZ="-1938">
++		<node X="-23189" Y="-110183" />
++		<node X="-22953" Y="-109964" />
++		<node X="-22889" Y="-109667" />
++		<node X="-22801" Y="-108792" />
++		<node X="-22758" Y="-108833" />
++		<node X="-22553" Y="-108803" />
++		<node X="-22481" Y="-108613" />
++		<node X="-22701" Y="-108326" />
++		<node X="-22247" Y="-107953" />
++		<node X="-22197" Y="-107433" />
++		<node X="-23035" Y="-106412" />
++		<node X="-23349" Y="-106379" />
++		<node X="-23746" Y="-106540" />
++		<node X="-24024" Y="-106766" />
++		<node X="-24545" Y="-106987" />
++		<node X="-24983" Y="-106987" />
++		<node X="-25369" Y="-107184" />
++		<node X="-25645" Y="-107394" />
++		<node X="-26270" Y="-107912" />
++		<node X="-26463" Y="-108207" />
++		<node X="-26744" Y="-108991" />
++		<node X="-27211" Y="-109366" />
++		<node X="-27404" Y="-109723" />
++		<node X="-27431" Y="-110012" />
++		<node X="-26592" Y="-111046" />
++		<node X="-26084" Y="-111094" />
++		<node X="-25615" Y="-110718" />
++		<node X="-25382" Y="-110991" />
++		<node X="-25183" Y="-110959" />
++		<node X="-25109" Y="-110766" />
++		<node X="-25082" Y="-110718" />
++		<node X="-24233" Y="-110807" />
++		<node X="-24071" Y="-110848" />
++		<node X="-23934" Y="-110775" />
++		<node X="-23693" Y="-110578" />
++		<node X="-23148" Y="-111211" />
++		<node X="-22683" Y="-110846" />
++	</zone>
++	<zone name="AtrusVisualZone" type="ScriptZone" shape="NPoly" minZ="-4900" maxZ="-200">
++		<node X="-11991" Y="-103871" />
++		<node X="-9553" Y="-104819" />
++		<node X="-9221" Y="-108354" />
++		<node X="-8077" Y="-112473" />
++		<node X="-8086" Y="-114697" />
++		<node X="-5812" Y="-116997" />
++		<node X="-6822" Y="-118161" />
++		<node X="-7988" Y="-118234" />
++		<node X="-9418" Y="-117244" />
++		<node X="-11288" Y="-124475" />
++		<node X="-12312" Y="-125523" />
++		<node X="-13299" Y="-127169" />
++		<node X="-15423" Y="-127519" />
++		<node X="-17922" Y="-127324" />
++		<node X="-20502" Y="-128649" />
++		<node X="-22438" Y="-128789" />
++		<node X="-25434" Y="-127153" />
++		<node X="-27340" Y="-127009" />
++		<node X="-29413" Y="-125033" />
++		<node X="-30382" Y="-124418" />
++		<node X="-30639" Y="-121749" />
++		<node X="-26975" Y="-116776" />
++		<node X="-26801" Y="-111548" />
++		<node X="-28356" Y="-113389" />
++		<node X="-29789" Y="-112338" />
++		<node X="-30959" Y="-111868" />
++		<node X="-30906" Y="-110520" />
++		<node X="-30772" Y="-108580" />
++		<node X="-30005" Y="-106852" />
++		<node X="-28510" Y="-103350" />
++		<node X="-27291" Y="-102478" />
++		<node X="-25960" Y="-103026" />
++		<node X="-24386" Y="-105155" />
++		<node X="-22214" Y="-106415" />
++		<node X="-19547" Y="-108187" />
++		<node X="-16614" Y="-107739" />
++		<node X="-12939" Y="-103235" />
++	</zone>
+ </list>
+\ No newline at end of file
+diff --git dist/game/data/zones/no_bookmark.xml dist/game/data/zones/no_bookmark.xml
+index 05f4896e0cd..1a640c3d19a 100644
+--- dist/game/data/zones/no_bookmark.xml
++++ dist/game/data/zones/no_bookmark.xml
+@@ -8333,4 +8333,43 @@
+ 		<node X="189865" Y="-108827" />
+ 		<node X="192009" Y="-108228" />
+ 	</zone>
++	<zone name="Atrus_Raid_Zone_No_Bookmark" type="ConditionZone" shape="NPoly" minZ="-3938" maxZ="-1938">
++		<node X="-23189" Y="-110183" />
++		<node X="-22953" Y="-109964" />
++		<node X="-22889" Y="-109667" />
++		<node X="-22801" Y="-108792" />
++		<node X="-22758" Y="-108833" />
++		<node X="-22553" Y="-108803" />
++		<node X="-22481" Y="-108613" />
++		<node X="-22701" Y="-108326" />
++		<node X="-22247" Y="-107953" />
++		<node X="-22197" Y="-107433" />
++		<node X="-23035" Y="-106412" />
++		<node X="-23349" Y="-106379" />
++		<node X="-23746" Y="-106540" />
++		<node X="-24024" Y="-106766" />
++		<node X="-24545" Y="-106987" />
++		<node X="-24983" Y="-106987" />
++		<node X="-25369" Y="-107184" />
++		<node X="-25645" Y="-107394" />
++		<node X="-26270" Y="-107912" />
++		<node X="-26463" Y="-108207" />
++		<node X="-26744" Y="-108991" />
++		<node X="-27211" Y="-109366" />
++		<node X="-27404" Y="-109723" />
++		<node X="-27431" Y="-110012" />
++		<node X="-26592" Y="-111046" />
++		<node X="-26084" Y="-111094" />
++		<node X="-25615" Y="-110718" />
++		<node X="-25382" Y="-110991" />
++		<node X="-25183" Y="-110959" />
++		<node X="-25109" Y="-110766" />
++		<node X="-25082" Y="-110718" />
++		<node X="-24233" Y="-110807" />
++		<node X="-24071" Y="-110848" />
++		<node X="-23934" Y="-110775" />
++		<node X="-23693" Y="-110578" />
++		<node X="-23148" Y="-111211" />
++		<node X="-22683" Y="-110846" />
++	</zone>
+ </list>
+\ No newline at end of file
+diff --git dist/game/data/zones/no_restart.xml dist/game/data/zones/no_restart.xml
+index 0d111c291cd..b4b43565bc8 100644
+--- dist/game/data/zones/no_restart.xml
++++ dist/game/data/zones/no_restart.xml
+@@ -374,4 +374,45 @@
+ 		<node X="120857" Y="121987" />
+ 		<node X="120900" Y="109162" />
+ 	</zone>
++	<zone name="Atrus_Raid_Zone_NoRestartZone" type="NoRestartZone" shape="NPoly" minZ="-3938" maxZ="-1938">
++		<stat name="restartTime" val="600" />
++		<stat name="restartAllowedTime" val="600" />
++		<node X="-23189" Y="-110183" />
++		<node X="-22953" Y="-109964" />
++		<node X="-22889" Y="-109667" />
++		<node X="-22801" Y="-108792" />
++		<node X="-22758" Y="-108833" />
++		<node X="-22553" Y="-108803" />
++		<node X="-22481" Y="-108613" />
++		<node X="-22701" Y="-108326" />
++		<node X="-22247" Y="-107953" />
++		<node X="-22197" Y="-107433" />
++		<node X="-23035" Y="-106412" />
++		<node X="-23349" Y="-106379" />
++		<node X="-23746" Y="-106540" />
++		<node X="-24024" Y="-106766" />
++		<node X="-24545" Y="-106987" />
++		<node X="-24983" Y="-106987" />
++		<node X="-25369" Y="-107184" />
++		<node X="-25645" Y="-107394" />
++		<node X="-26270" Y="-107912" />
++		<node X="-26463" Y="-108207" />
++		<node X="-26744" Y="-108991" />
++		<node X="-27211" Y="-109366" />
++		<node X="-27404" Y="-109723" />
++		<node X="-27431" Y="-110012" />
++		<node X="-26592" Y="-111046" />
++		<node X="-26084" Y="-111094" />
++		<node X="-25615" Y="-110718" />
++		<node X="-25382" Y="-110991" />
++		<node X="-25183" Y="-110959" />
++		<node X="-25109" Y="-110766" />
++		<node X="-25082" Y="-110718" />
++		<node X="-24233" Y="-110807" />
++		<node X="-24071" Y="-110848" />
++		<node X="-23934" Y="-110775" />
++		<node X="-23693" Y="-110578" />
++		<node X="-23148" Y="-111211" />
++		<node X="-22683" Y="-110846" />
++	</zone>
+ </list>
+diff --git dist/game/data/zones/no_summon_friend.xml dist/game/data/zones/no_summon_friend.xml
+index b692c325879..d2d20693dc2 100644
+--- dist/game/data/zones/no_summon_friend.xml
++++ dist/game/data/zones/no_summon_friend.xml
+@@ -317,4 +317,43 @@
+ 		<node X="189865" Y="-108827" />
+ 		<node X="192009" Y="-108228" />
+ 	</zone>
++		<zone name="Atrus_Raid_Zone_NoSummonFriend" type="ScriptZone" shape="NPoly" minZ="-3938" maxZ="-1938">
++		<node X="-23189" Y="-110183" />
++		<node X="-22953" Y="-109964" />
++		<node X="-22889" Y="-109667" />
++		<node X="-22801" Y="-108792" />
++		<node X="-22758" Y="-108833" />
++		<node X="-22553" Y="-108803" />
++		<node X="-22481" Y="-108613" />
++		<node X="-22701" Y="-108326" />
++		<node X="-22247" Y="-107953" />
++		<node X="-22197" Y="-107433" />
++		<node X="-23035" Y="-106412" />
++		<node X="-23349" Y="-106379" />
++		<node X="-23746" Y="-106540" />
++		<node X="-24024" Y="-106766" />
++		<node X="-24545" Y="-106987" />
++		<node X="-24983" Y="-106987" />
++		<node X="-25369" Y="-107184" />
++		<node X="-25645" Y="-107394" />
++		<node X="-26270" Y="-107912" />
++		<node X="-26463" Y="-108207" />
++		<node X="-26744" Y="-108991" />
++		<node X="-27211" Y="-109366" />
++		<node X="-27404" Y="-109723" />
++		<node X="-27431" Y="-110012" />
++		<node X="-26592" Y="-111046" />
++		<node X="-26084" Y="-111094" />
++		<node X="-25615" Y="-110718" />
++		<node X="-25382" Y="-110991" />
++		<node X="-25183" Y="-110959" />
++		<node X="-25109" Y="-110766" />
++		<node X="-25082" Y="-110718" />
++		<node X="-24233" Y="-110807" />
++		<node X="-24071" Y="-110848" />
++		<node X="-23934" Y="-110775" />
++		<node X="-23693" Y="-110578" />
++		<node X="-23148" Y="-111211" />
++		<node X="-22683" Y="-110846" />
++	</zone>
+ </list>
+\ No newline at end of file
+diff --git dist/game/data/zones/peace.xml dist/game/data/zones/peace.xml
+index 3e860d8f5f0..68a0c3a6ae7 100644
+--- dist/game/data/zones/peace.xml
++++ dist/game/data/zones/peace.xml
+@@ -1182,4 +1182,17 @@
+ 		<node X="149843" Y="-112843" />
+ 		<node X="149465" Y="-113152" />
+ 	</zone>
++		<zone name="Kasha_Orc_Fortress_Spawn" type="PeaceZone" shape="NPoly" minZ="-3451" maxZ="-1451"> <!-- Kasha Orc Fortress Spawn -->
++		<node X="-9014" Y="-115014" />
++		<node X="-8905" Y="-115111" />
++		<node X="-8694" Y="-115034" />
++		<node X="-8596" Y="-115072" />
++		<node X="-8597" Y="-114984" />
++		<node X="-8437" Y="-114756" />
++		<node X="-8415" Y="-114492" />
++		<node X="-8508" Y="-114388" />
++		<node X="-8784" Y="-114328" />
++		<node X="-9207" Y="-114601" />
++		<node X="-9218" Y="-114720" />
++	</zone>
+ </list>
+\ No newline at end of file
